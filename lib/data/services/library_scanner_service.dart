@@ -102,22 +102,45 @@ class LibraryScannerService {
 
   // ─── Özel Yardımcılar ───────────────────────────────────────────────────────
 
-  /// [folderPath] içindeki tüm desteklenen dosya yollarını sıralı döner.
+  /// [folderPath] ve tüm alt klasörlerindeki desteklenen dosyaları sıralı döner.
   /// Desteklenen uzantılar: .cbz, .zip, .cbr, .rar, .pdf (büyük/küçük harf duyarsız)
+  ///
+  /// Recursive tarama: alt klasörlere de bakar (Manga/Cilt1/*.cbz vb.)
+  /// Erişilemez dizinler/dosyalar sessizce atlanır.
   List<String> _findSupportedFiles(String folderPath) {
     final dir = Directory(folderPath);
     if (!dir.existsSync()) return [];
 
+    final results = <String>[];
+    _scanDirectory(dir, results);
+    results.sort();
+    return results;
+  }
+
+  /// [directory] içindirüksel olarak tarar.
+  /// Her düzey try-catch ile korunur — bozuk/erişimsiz altın dizin tüm taramayı kesmez.
+  void _scanDirectory(Directory directory, List<String> results) {
+    Iterable<FileSystemEntity> entities;
     try {
-      return dir
-          .listSync(recursive: false)
-          .whereType<File>()
-          .where((f) => ComicDecoderFactory.isSupported(f.path))
-          .map((f) => p.normalize(f.path))
-          .toList()
-        ..sort();
+      // followLinks:false – sembolik bağlantı döngülerini önler
+      entities = directory.listSync(recursive: false, followLinks: false);
     } catch (_) {
-      return [];
+      return; // Erişimsiz dizin → atla
+    }
+
+    for (final entity in entities) {
+      try {
+        if (entity is File) {
+          if (ComicDecoderFactory.isSupported(entity.path)) {
+            results.add(p.normalize(entity.path));
+          }
+        } else if (entity is Directory) {
+          _scanDirectory(entity, results); // Alt klasöre in
+        }
+      } catch (_) {
+        // Tek bir dosya/dizin hatası diğerlerini etkilemez
+        continue;
+      }
     }
   }
 

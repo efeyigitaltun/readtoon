@@ -2,12 +2,19 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ─── Depolama İzinleri ──────────────────────────────────────────────── -->
-    <!-- Android 9 ve altı: geniş dosya okuma -->
+    <!--
+        Android 13+ (API 33): READ_MEDIA_IMAGES
+        Android 10–12        : READ_EXTERNAL_STORAGE (maxSdkVersion=32)
+        Android 11+          : MANAGE_EXTERNAL_STORAGE → Tüm dosyalara erişim
+        (permission_handler bu hiyerarşiyi otomatik yönetir)
+    -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- Android 13+ (API 33): medya görüntüleri -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <!-- Tam dosya erişimi (manga okuyucu için gerekli – kullanıcı Settings'ten onaylar) -->
+
+    <!-- Android 11+ için tam dosya erişimi — manga okuyucu için zorunlu -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
 
@@ -39,10 +46,19 @@
             android:value="2" />
     </application>
 
+    <!-- permission_handler: openAppSettings() için gerekli query -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Sistem ayarları ekranına yönlendirme -->
+        <intent>
+            <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS"/>
+        </intent>
+        <!-- Android 11+ "Tüm Dosyalara Erişim" ayarı -->
+        <intent>
+            <action android:name="android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION"/>
         </intent>
     </queries>
 </manifest>

@@ -14,11 +14,40 @@ import 'reader_screen.dart';
 class LibraryScreen extends ConsumerWidget {
   const LibraryScreen({super.key});
 
+  /// Tara butonuna basıldığında önce izni kontrol eder.
+  Future<void> _scanWithPermissionCheck(BuildContext context, WidgetRef ref) async {
+    final permService = ref.read(permissionServiceProvider);
+    final hasPermission = await permService.isStoragePermissionGranted();
+
+    if (!hasPermission) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Depolama izni verilmemiş. Klasör seçim ekranından izin verin.',
+          ),
+          backgroundColor: AppColors.surface,
+          action: SnackBarAction(
+            label: 'Ayarlar',
+            textColor: AppColors.accent,
+            onPressed: () async {
+              // İzin verilmemişse Setup ekranına dön
+              await ref.read(appSettingsProvider.notifier).clearFolderPath();
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
+    ref.read(libraryProvider.notifier).scanLibrary();
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final libraryAsync = ref.watch(libraryProvider);
     final scanProgress = ref.watch(scanProgressProvider);
-    final folderPath = ref.watch(selectedFolderProvider);
+    final folderPath = ref.watch(appSettingsProvider).folderPath;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -66,12 +95,12 @@ class LibraryScreen extends ConsumerWidget {
             ),
           ),
 
-        // ─── Yenile / Tara Butonu ────────────────────────────────────────
+        // ─── Yenile / Tara Butonu ──────────────────────────────────────────
         IconButton(
           tooltip: 'Klasörü yeniden tara',
           onPressed: isScanning
               ? null
-              : () => ref.read(libraryProvider.notifier).scanLibrary(),
+              : () => _scanWithPermissionCheck(context, ref),
           icon: isScanning
               ? const SizedBox(
                   width: 20,
@@ -89,12 +118,13 @@ class LibraryScreen extends ConsumerWidget {
           icon: const Icon(Icons.more_vert_rounded),
           onSelected: (value) async {
             if (value == 'change_folder') {
-              final newPath =
-                  await ref.read(selectedFolderProvider.notifier).pickFolder();
+              final filePicker = ref.read(filePickerServiceProvider);
+              final newPath = await filePicker.pickMangaDirectory();
               if (newPath != null) {
-                await ref
-                    .read(libraryProvider.notifier)
-                    .onFolderChanged(newPath);
+                await ref.read(appSettingsProvider.notifier).setFolderPath(newPath);
+                if (context.mounted) {
+                  await ref.read(libraryProvider.notifier).onFolderChanged(newPath);
+                }
               }
             }
           },

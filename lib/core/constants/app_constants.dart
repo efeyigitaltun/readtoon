@@ -7,10 +7,15 @@ class AppConstants {
   static const String historyBox = 'history';
   static const String settingsBox = 'settings';
 
-  // ─── Hive Settings Anahtarları ─────────────────────────────────────────────
+  // ─── Hive Settings Anahtarıları ────────────────────────────────────────────
   static const String settingsKeyFolderPath = 'selected_folder_path';
-  static const String settingsKeyFolderUri = 'selected_folder_uri';
-  static const String settingsKeyReadingMode = 'default_reading_mode';
+  // Okuma Ayarları
+  static const String settingsKeyWebtoonMode = 'is_webtoon_mode';
+  static const String settingsKeyRTL = 'is_rtl';
+  static const String settingsKeyDoubleTapZoom = 'double_tap_zoom';
+  // Genel Ayarlar
+  static const String settingsKeyKeepScreenOn = 'keep_screen_on';
+  static const String settingsKeyScanOnStartup = 'scan_on_startup';
 
   // ─── Okuma Modu Değerleri ──────────────────────────────────────────────────
   static const String readingModeWebtoon = 'webtoon';

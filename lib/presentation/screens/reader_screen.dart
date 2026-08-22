@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:volume_controller/volume_controller.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
@@ -24,16 +24,13 @@ class ReaderScreen extends ConsumerStatefulWidget {
 }
 
 class _ReaderScreenState extends ConsumerState<ReaderScreen> {
-  // ─── Decoder – tüm sayfa yüklemelerini yönetir ────────────────────────────
   late IComicDecoder _decoder;
-
   late PageController _pageController;
   final ScrollController _scrollController = ScrollController();
 
   int _pageCount = 0;
   bool _isLoading = true;
   String? _loadError;
-  double _lastVolume = -1;
 
   // ─── Yaşam Döngüsü ──────────────────────────────────────────────────────────
 
@@ -41,11 +38,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _setupVolumeListener();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      final mode = ref.read(readingModeProvider);
+      _applyWakelock();
+      final settings = ref.read(appSettingsProvider);
+      final mode = settings.isWebtoonMode
+          ? AppConstants.readingModeWebtoon
+          : AppConstants.readingModeManga;
       ref.read(currentPageProvider.notifier).initialize(widget.comic, mode);
       await _initDecoder();
     });
@@ -53,7 +53,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   @override
   void dispose() {
-    VolumeController().removeListener();
+    WakelockPlus.disable(); // Okuyucudan çıkınca her zaman kapat
     _decoder.dispose();
     _pageController.dispose();
     _scrollController.dispose();
@@ -61,11 +61,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     super.dispose();
   }
 
-  // ─── Decoder ve Sayfa Sayısı Yükleme ────────────────────────────────────────
+  void _applyWakelock() {
+    final keepOn = ref.read(appSettingsProvider).keepScreenOn;
+    WakelockPlus.toggle(enable: keepOn);
+  }
+
+  // ─── Decoder Yükleme ────────────────────────────────────────────────────────
 
   Future<void> _initDecoder() async {
     try {
-      // Factory: uzantıya göre doğru decoder'ı oluşturur (ZIP/RAR/PDF)
       _decoder = ComicDecoderFactory.createForFile(widget.comic.filePath);
       final count = await _decoder.getPageCount();
       if (mounted) {
@@ -88,85 +92,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void _initPageController() {
     final startPage = ref.read(currentPageProvider);
     _pageController = PageController(
-      initialPage: startPage.clamp(0, (_pageCount - 1).clamp(0, 99999)),
+      initialPage: startPage.clamp(0, (_pageCount - 1).clamp(0, 999999)),
     );
+    setState(() {}); // controller hazır, yeniden çiz
   }
 
-  // ─── Ses Tuşu → Sayfa Atlama ─────────────────────────────────────────────
-
-  void _setupVolumeListener() {
-    VolumeController().showSystemUI = false;
-    VolumeController()
-        .getVolume()
-        .then((v) => _lastVolume = v)
-        .catchError((_) => _lastVolume = 0.5);
-
-    VolumeController().listener((volume) {
-      if (_lastVolume < 0 || !mounted) {
-        _lastVolume = volume;
-        return;
-      }
-      final delta = volume - _lastVolume;
-      _lastVolume = volume;
-      if (delta.abs() < 0.01) return;
-
-      final pageNotifier = ref.read(currentPageProvider.notifier);
-      final isWebtoon =
-          ref.read(readingModeProvider) == AppConstants.readingModeWebtoon;
-      final screenH = MediaQuery.of(context).size.height;
-
-      if (delta < 0) {
-        if (isWebtoon) {
-          _scrollController.animateTo(
-            _scrollController.offset + screenH * 0.9,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        } else {
-          pageNotifier.nextPage();
-          _safePageNext();
-        }
-      } else {
-        if (isWebtoon) {
-          _scrollController.animateTo(
-            _scrollController.offset - screenH * 0.9,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        } else {
-          pageNotifier.prevPage();
-          _safePagePrev();
-        }
-      }
-    });
-  }
-
-  void _safePageNext() {
-    if (_pageController.hasClients) {
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeInOut,
-      );
-    }
-  }
-
-  void _safePagePrev() {
-    if (_pageController.hasClients) {
-      _pageController.previousPage(
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeInOut,
-      );
-    }
-  }
-
-  // ─── Dokunma Alanı Yönetimi ─────────────────────────────────────────────────
+  // ─── Dokunma Alanı ──────────────────────────────────────────────────────────
 
   void _handleTap(TapUpDetails details) {
     final width = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
     final x = details.globalPosition.dx;
-    final isWebtoon =
-        ref.read(readingModeProvider) == AppConstants.readingModeWebtoon;
+
+    final isWebtoon = ref.read(appSettingsProvider).isWebtoonMode;
     final pageNotifier = ref.read(currentPageProvider.notifier);
 
     if (x < width * AppConstants.tapZonePrevRatio) {
@@ -199,10 +137,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   void _updateSystemUI() {
     final menuVisible = ref.read(readerMenuVisibleProvider);
-    if (menuVisible) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    } else {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setEnabledSystemUIMode(
+      menuVisible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+    );
+  }
+
+  void _safePageNext() {
+    if (_pageController.hasClients) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  void _safePagePrev() {
+    if (_pageController.hasClients) {
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+      );
     }
   }
 
@@ -212,15 +166,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Widget build(BuildContext context) {
     final isMenuVisible = ref.watch(readerMenuVisibleProvider);
     final currentPage = ref.watch(currentPageProvider);
-    final isWebtoon =
-        ref.watch(readingModeProvider) == AppConstants.readingModeWebtoon;
+    final settings = ref.watch(appSettingsProvider);
 
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(color: AppColors.accent),
-        ),
+        body: Center(child: CircularProgressIndicator(color: AppColors.accent)),
       );
     }
 
@@ -252,7 +203,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         child: Stack(
           children: [
             // ─── Okuma İçeriği ───────────────────────────────────────────
-            if (isWebtoon)
+            if (settings.isWebtoonMode)
               _WebtoonView(
                 decoder: _decoder,
                 pageCount: _pageCount,
@@ -263,6 +214,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 decoder: _decoder,
                 pageCount: _pageCount,
                 pageController: _pageController,
+                isRTL: settings.isRTL,
                 onPageChanged: (index) {
                   ref.read(currentPageProvider.notifier).goToPage(index);
                 },
@@ -291,7 +243,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 onSliderChanged: (value) {
                   final index = (value * (_pageCount - 1)).round();
                   ref.read(currentPageProvider.notifier).goToPage(index);
-                  if (!isWebtoon && _pageController.hasClients) {
+                  if (!settings.isWebtoonMode && _pageController.hasClients) {
                     _pageController.jumpToPage(index);
                   }
                 },
@@ -336,19 +288,21 @@ class _WebtoonView extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Manga Modu – Yatay PageView (Sağdan Sola)
+// Manga Modu – Yatay PageView (RTL desteği)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class _MangaView extends StatelessWidget {
   final IComicDecoder decoder;
   final int pageCount;
   final PageController pageController;
+  final bool isRTL;
   final ValueChanged<int> onPageChanged;
 
   const _MangaView({
     required this.decoder,
     required this.pageCount,
     required this.pageController,
+    required this.isRTL,
     required this.onPageChanged,
   });
 
@@ -356,7 +310,7 @@ class _MangaView extends StatelessWidget {
   Widget build(BuildContext context) {
     return PageView.builder(
       controller: pageController,
-      reverse: true, // Sağdan sola (manga yönü)
+      reverse: isRTL, // Sağdan sola (manga yönü) veya soldan sağa
       onPageChanged: onPageChanged,
       itemCount: pageCount,
       itemBuilder: (context, index) => _LazyPageImage(
@@ -369,12 +323,9 @@ class _MangaView extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Lazy Page Image
-// Decoder'ı doğrudan kullanır – format agnostik, RAM dostu.
+// Lazy Page Image – Decoder üzerinden sayfa başına yükleme
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Tek bir sayfayı decoder üzerinden yükler.
-/// Widget ağaçtan ayrıldığında sayfa verisi çöp toplayıcıya bırakılır.
 class _LazyPageImage extends StatefulWidget {
   final IComicDecoder decoder;
   final int pageIndex;
@@ -403,21 +354,10 @@ class _LazyPageImageState extends State<_LazyPageImage> {
 
   Future<void> _loadPage() async {
     try {
-      // Decoder: format ne olursa olsun doğru çözücüyü kullanır
       final bytes = await widget.decoder.getPage(widget.pageIndex);
-      if (mounted) {
-        setState(() {
-          _bytes = bytes;
-          _loading = false;
-        });
-      }
+      if (mounted) setState(() { _bytes = bytes; _loading = false; });
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _loading = false;
-        });
-      }
+      if (mounted) setState(() { _hasError = true; _loading = false; });
     }
   }
 
@@ -430,10 +370,7 @@ class _LazyPageImageState extends State<_LazyPageImage> {
           child: SizedBox(
             width: 28,
             height: 28,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: AppColors.accent,
-            ),
+            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
           ),
         ),
       );
@@ -446,14 +383,10 @@ class _LazyPageImageState extends State<_LazyPageImage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.broken_image_rounded,
-                  color: AppColors.textDisabled, size: 36),
+              const Icon(Icons.broken_image_rounded, color: AppColors.textDisabled, size: 36),
               const SizedBox(height: 8),
-              Text(
-                'Sayfa ${widget.pageIndex + 1} yüklenemedi',
-                style: const TextStyle(
-                    color: AppColors.textDisabled, fontSize: 12),
-              ),
+              Text('Sayfa ${widget.pageIndex + 1} yüklenemedi',
+                  style: const TextStyle(color: AppColors.textDisabled, fontSize: 12)),
             ],
           ),
         ),
@@ -467,8 +400,7 @@ class _LazyPageImageState extends State<_LazyPageImage> {
       gaplessPlayback: true,
       errorBuilder: (_, __, ___) => const SizedBox(
         height: 200,
-        child:
-            Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textDisabled)),
+        child: Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textDisabled)),
       ),
     );
   }
@@ -484,8 +416,7 @@ class _TopMenu extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isWebtoon =
-        ref.watch(readingModeProvider) == AppConstants.readingModeWebtoon;
+    final settings = ref.watch(appSettingsProvider);
 
     return Container(
       color: AppColors.readerMenuBackground,
@@ -496,8 +427,7 @@ class _TopMenu extends ConsumerWidget {
           child: Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.arrow_back_rounded,
-                    color: AppColors.textPrimary),
+                icon: const Icon(Icons.arrow_back_rounded, color: AppColors.textPrimary),
                 onPressed: () => Navigator.of(context).pop(),
               ),
               Expanded(
@@ -512,19 +442,12 @@ class _TopMenu extends ConsumerWidget {
                 ),
               ),
               IconButton(
-                tooltip: isWebtoon ? 'Manga moduna geç' : 'Webtoon moduna geç',
+                tooltip: settings.isWebtoonMode ? 'Manga moduna geç' : 'Webtoon moduna geç',
                 icon: Icon(
-                  isWebtoon
-                      ? Icons.swap_vert_rounded
-                      : Icons.swap_horiz_rounded,
+                  settings.isWebtoonMode ? Icons.swap_vert_rounded : Icons.swap_horiz_rounded,
                   color: AppColors.accent,
                 ),
-                onPressed: () {
-                  final newMode = isWebtoon
-                      ? AppConstants.readingModeManga
-                      : AppConstants.readingModeWebtoon;
-                  ref.read(readingModeProvider.notifier).setMode(newMode);
-                },
+                onPressed: () => ref.read(appSettingsProvider.notifier).setWebtoonMode(!settings.isWebtoonMode),
               ),
             ],
           ),
@@ -569,21 +492,12 @@ class _BottomMenu extends StatelessWidget {
                   thumbColor: AppColors.accent,
                   overlayColor: AppColors.accent.withValues(alpha: 0.2),
                   trackHeight: 3,
-                  thumbShape:
-                      const RoundSliderThumbShape(enabledThumbRadius: 8),
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
                 ),
-                child: Slider(
-                  value: progress.clamp(0.0, 1.0),
-                  onChanged: onSliderChanged,
-                ),
+                child: Slider(value: progress.clamp(0.0, 1.0), onChanged: onSliderChanged),
               ),
-              Text(
-                '${currentPage + 1} / $totalPages',
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
-                ),
-              ),
+              Text('${currentPage + 1} / $totalPages',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
               const SizedBox(height: 4),
             ],
           ),

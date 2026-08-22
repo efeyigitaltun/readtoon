@@ -52,7 +52,7 @@ class LibraryNotifier extends AsyncNotifier<List<ComicBook>> {
   Future<List<ComicBook>> build() async {
     // Başlangıçta Hive'daki mevcut veriyi göster
     final scanner = ref.read(libraryScannerServiceProvider);
-    final folderPath = ref.read(selectedFolderProvider);
+    final folderPath = ref.read(appSettingsProvider).folderPath;
 
     if (folderPath == null) return [];
 
@@ -61,7 +61,7 @@ class LibraryNotifier extends AsyncNotifier<List<ComicBook>> {
 
   /// Seçili klasörü tarar ve kütüphaneyi yeniler.
   Future<void> scanLibrary() async {
-    final folderPath = ref.read(selectedFolderProvider);
+    final folderPath = ref.read(appSettingsProvider).folderPath;
     if (folderPath == null) return;
 
     final scanner = ref.read(libraryScannerServiceProvider);

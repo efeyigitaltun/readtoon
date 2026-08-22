@@ -27,7 +27,7 @@ class _RootNavigator extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final folderPath = ref.watch(selectedFolderProvider);
+    final folderPath = ref.watch(appSettingsProvider).folderPath;
 
     if (folderPath == null) {
       return const SetupScreen();

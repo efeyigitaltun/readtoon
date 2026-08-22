@@ -30,12 +30,15 @@ dependencies:
   # Dosya / klasör seçici (SAF destekli)
   file_picker: ^8.1.7
 
+  # Android izin yönetimi (MANAGE_EXTERNAL_STORAGE + fallback)
+  permission_handler: ^11.3.1
+
   # Yardımcı
   path_provider: ^2.1.5
   path: ^1.9.1
 
-  # Ses tuşu desteği
-  volume_controller: ^2.0.6
+  # Ekranı açık tut (Wakelock)
+  wakelock_plus: ^1.2.8
 
 dev_dependencies:
   flutter_test:
