@@ -1,0 +1,46 @@
+name: readtoon
+description: "Modern manga ve webtoon okuyucu - CDisplayEx alternatifi"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+
+  # Lokal Veritabanı
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Arşiv okuma – ZIP/CBZ (stabil, proven)
+  archive: ^3.6.1
+
+  # Arşiv okuma – RAR/CBR + auto-detect facade (pure Dart)
+  koni_archive: ^0.9.0
+
+  # PDF sayfa sayfa render (Android native PdfRenderer)
+  pdfx: ^2.11.0
+
+  # Dosya / klasör seçici (SAF destekli)
+  file_picker: ^8.1.7
+
+  # Yardımcı
+  path_provider: ^2.1.5
+  path: ^1.9.1
+
+  # Ses tuşu desteği
+  volume_controller: ^2.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
