@@ -52,24 +52,70 @@ class LibraryScreen extends ConsumerWidget {
     final libraryAsync = ref.watch(libraryProvider);
     final scanProgress = ref.watch(scanProgressProvider);
     final folderPath = ref.watch(appSettingsProvider).folderPath;
+    final activeFilter = ref.watch(libraryFilterProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: _buildAppBar(context, ref, folderPath, scanProgress),
-      body: libraryAsync.when(
-        loading: () => const _LoadingView(),
-        error: (e, _) => _ErrorView(message: e.toString()),
-        data: (comics) {
-          if (comics.isEmpty) {
-            return _EmptyLibraryView(
-              isScanning: scanProgress.$2 > 0,
-              onScan: () => ref.read(libraryProvider.notifier).scanLibrary(),
-            );
-          }
-          return _ComicGrid(comics: comics);
-        },
+      body: Column(
+        children: [
+          _LibraryFilterBar(
+            selected: activeFilter,
+            onSelected: (filter) =>
+                ref.read(libraryFilterProvider.notifier).select(filter),
+          ),
+          Expanded(
+            child: libraryAsync.when(
+              loading: () => const _LoadingView(),
+              error: (e, _) => _ErrorView(message: e.toString()),
+              data: (comics) {
+                if (comics.isEmpty) {
+                  return _EmptyLibraryView(
+                    isScanning: scanProgress.$2 > 0,
+                    onScan: () =>
+                        ref.read(libraryProvider.notifier).scanLibrary(),
+                  );
+                }
+
+                final visibleComics = _filterComics(ref, comics, activeFilter);
+                if (visibleComics.isEmpty) {
+                  return _EmptyFilterView(
+                    filter: activeFilter,
+                    onReset: () => ref
+                        .read(libraryFilterProvider.notifier)
+                        .select(LibraryFilter.all),
+                  );
+                }
+                return _ComicGrid(comics: visibleComics);
+              },
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  List<ComicBook> _filterComics(
+    WidgetRef ref,
+    List<ComicBook> comics,
+    LibraryFilter filter,
+  ) {
+    switch (filter) {
+      case LibraryFilter.all:
+        return comics;
+      case LibraryFilter.favorites:
+        return comics.where((comic) => comic.isFavorite).toList();
+      case LibraryFilter.unread:
+        return comics.where((comic) {
+          final history = ref.watch(readHistoryProvider(comic.id)).valueOrNull;
+          return comic.readingStatus(history) == ComicReadingStatus.unread;
+        }).toList();
+      case LibraryFilter.read:
+        return comics.where((comic) {
+          final history = ref.watch(readHistoryProvider(comic.id)).valueOrNull;
+          return comic.readingStatus(history) == ComicReadingStatus.read;
+        }).toList();
+    }
   }
 
   PreferredSizeWidget _buildAppBar(
@@ -190,6 +236,120 @@ class LibraryScreen extends ConsumerWidget {
               ),
             )
           : null,
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Filtre Sekmeleri
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _LibraryFilterBar extends StatelessWidget {
+  final LibraryFilter selected;
+  final ValueChanged<LibraryFilter> onSelected;
+
+  const _LibraryFilterBar({required this.selected, required this.onSelected});
+
+  static const _filters = <(LibraryFilter, String)>[
+    (LibraryFilter.all, 'Tümü'),
+    (LibraryFilter.favorites, 'Favoriler'),
+    (LibraryFilter.unread, 'Okunmayanlar'),
+    (LibraryFilter.read, 'Okunanlar'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 58,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            for (var index = 0; index < _filters.length; index++) ...[
+              if (index > 0) const SizedBox(width: 8),
+              _buildChip(_filters[index].$1, _filters[index].$2),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChip(LibraryFilter filter, String label) {
+    final isSelected = selected == filter;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      showCheckmark: false,
+      onSelected: (_) => onSelected(filter),
+      backgroundColor: AppColors.surface,
+      selectedColor: AppColors.accent,
+      side: BorderSide(
+        color: isSelected ? AppColors.accent : AppColors.divider,
+      ),
+      labelStyle: TextStyle(
+        color: isSelected ? AppColors.background : AppColors.textSecondary,
+        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+      ),
+    );
+  }
+}
+
+class _EmptyFilterView extends StatelessWidget {
+  final LibraryFilter filter;
+  final VoidCallback onReset;
+
+  const _EmptyFilterView({required this.filter, required this.onReset});
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, title, message) = switch (filter) {
+      LibraryFilter.all => (
+        Icons.menu_book_rounded,
+        'Kütüphane boş',
+        'Henüz kitap eklenmemiş.',
+      ),
+      LibraryFilter.favorites => (
+        Icons.favorite_border_rounded,
+        'Favori yok',
+        'Favori kitaplarını burada göreceksin.',
+      ),
+      LibraryFilter.unread => (
+        Icons.mark_email_read_outlined,
+        'Okunmamış kitap yok',
+        'Kütüphanendeki kitapların tümü okunmuş.',
+      ),
+      LibraryFilter.read => (
+        Icons.menu_book_rounded,
+        'Okunmuş kitap yok',
+        'Bir kitabı bitirdiğinde burada görünecek.',
+      ),
+    };
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 52, color: AppColors.textDisabled),
+            const SizedBox(height: 16),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: onReset,
+              child: const Text('Tüm kitapları göster'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

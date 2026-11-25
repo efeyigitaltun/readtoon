@@ -12,15 +12,13 @@ class ComicCoverCard extends ConsumerWidget {
   final ComicBook comic;
   final VoidCallback onTap;
 
-  const ComicCoverCard({
-    super.key,
-    required this.comic,
-    required this.onTap,
-  });
+  const ComicCoverCard({super.key, required this.comic, required this.onTap});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final progress = ref.watch(comicProgressProvider(comic));
+    final history = ref.watch(readHistoryProvider(comic.id)).valueOrNull;
+    final readingStatus = comic.readingStatus(history);
     final theme = Theme.of(context);
 
     return GestureDetector(
@@ -34,7 +32,75 @@ class ComicCoverCard extends ConsumerWidget {
             children: [
               // ─── Kapak Görseli ─────────────────────────────────────────
               Expanded(
-                child: _CoverImage(comic: comic),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _CoverImage(comic: comic),
+                    if (readingStatus == ComicReadingStatus.read)
+                      Positioned(
+                        top: 7,
+                        left: 7,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.background.withValues(alpha: 0.82),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.check_circle_rounded,
+                                size: 13,
+                                color: AppColors.accent,
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                'Okundu',
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Material(
+                        color: AppColors.background.withValues(alpha: 0.78),
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () => ref
+                              .read(libraryProvider.notifier)
+                              .toggleFavorite(comic.id),
+                          child: SizedBox(
+                            width: 34,
+                            height: 34,
+                            child: Icon(
+                              comic.isFavorite
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              size: 19,
+                              color: comic.isFavorite
+                                  ? AppColors.accent
+                                  : AppColors.textPrimary.withValues(
+                                      alpha: 0.72,
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
 
               // ─── Başlık + İlerleme Çubuğu ─────────────────────────────

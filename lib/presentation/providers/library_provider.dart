@@ -22,6 +22,24 @@ final libraryScannerServiceProvider = Provider<LibraryScannerService>(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Kütüphane Filtresi
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum LibraryFilter { all, favorites, unread, read }
+
+class LibraryFilterNotifier extends Notifier<LibraryFilter> {
+  @override
+  LibraryFilter build() => LibraryFilter.all;
+
+  void select(LibraryFilter filter) => state = filter;
+}
+
+final libraryFilterProvider =
+    NotifierProvider<LibraryFilterNotifier, LibraryFilter>(
+      LibraryFilterNotifier.new,
+    );
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Tarama İlerleme State'i
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -101,6 +119,28 @@ class LibraryNotifier extends AsyncNotifier<List<ComicBook>> {
     }
   }
 
+  /// Favori durumunu Hive'a kaydeder ve mevcut listeyi anında yeniler.
+  Future<void> toggleFavorite(String comicId) async {
+    final box = Hive.box<ComicBook>(AppConstants.comicsBox);
+    final comic = box.get(comicId);
+    if (comic == null) return;
+
+    final previousValue = comic.isFavorite;
+    comic.isFavorite = !previousValue;
+
+    try {
+      await box.put(comicId, comic);
+    } catch (_) {
+      comic.isFavorite = previousValue;
+      rethrow;
+    }
+
+    state = state.whenData(
+      (comics) =>
+          comics.map((item) => item.id == comicId ? comic : item).toList(),
+    );
+  }
+
   /// Yeni bir klasör seçildiğinde kütüphaneyi o klasöre göre yeniler.
   Future<void> onFolderChanged(String newFolderPath) async {
     final scanner = ref.read(libraryScannerServiceProvider);
@@ -126,19 +166,23 @@ final libraryProvider = AsyncNotifierProvider<LibraryNotifier, List<ComicBook>>(
 
 /// Bir kitabın okuma geçmişini döner.
 /// [null] → bu kitap hiç açılmamış.
-final readHistoryProvider = Provider.family<ReadHistory?, String>((
+final readHistoryProvider = StreamProvider.family<ReadHistory?, String>((
   ref,
   comicId,
-) {
+) async* {
   final box = Hive.box<ReadHistory>(AppConstants.historyBox);
-  return box.get(comicId);
+  yield box.get(comicId);
+
+  await for (final _ in box.watch(key: comicId)) {
+    yield box.get(comicId);
+  }
 });
 
 // ─── İlerleme yüzdesi kısayolu ────────────────────────────────────────────────
 
 /// Belirli bir kitabın ilerleme oranını döner (0.0 – 1.0).
 final comicProgressProvider = Provider.family<double, ComicBook>((ref, comic) {
-  final history = ref.watch(readHistoryProvider(comic.id));
+  final history = ref.watch(readHistoryProvider(comic.id)).valueOrNull;
   if (history == null || comic.totalPages == 0) return 0.0;
   return history.progressOf(comic.totalPages);
 });

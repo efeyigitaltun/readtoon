@@ -1,5 +1,8 @@
 import 'dart:typed_data';
+
 import 'package:hive/hive.dart';
+
+import 'read_history.dart';
 
 /// Kütüphanedeki her bir manga/webtoon dosyasını temsil eder.
 /// Hive box: AppConstants.comicsBox, key: [id]
@@ -25,6 +28,9 @@ class ComicBook extends HiveObject {
   /// Kütüphaneye eklenme tarihi
   DateTime addedAt;
 
+  /// Kullanıcının favori olarak işaretleyip işaretlemediği
+  bool isFavorite;
+
   ComicBook({
     required this.id,
     required this.title,
@@ -33,8 +39,22 @@ class ComicBook extends HiveObject {
     required this.totalPages,
     required this.parentFolderPath,
     required this.addedAt,
+    this.isFavorite = false,
   });
+
+  /// Okuma durumunu okuma geçmişi ve toplam sayfa sayısına göre hesaplar.
+  ComicReadingStatus readingStatus(ReadHistory? history) {
+    if (history == null || history.currentPage == 0) {
+      return ComicReadingStatus.unread;
+    }
+    if (totalPages > 0 && history.currentPage >= totalPages - 1) {
+      return ComicReadingStatus.read;
+    }
+    return ComicReadingStatus.reading;
+  }
 }
+
+enum ComicReadingStatus { unread, reading, read }
 
 /// Hive TypeAdapter – manuel yazıldı, build_runner gerektirmez.
 class ComicBookAdapter extends TypeAdapter<ComicBook> {
@@ -55,13 +75,15 @@ class ComicBookAdapter extends TypeAdapter<ComicBook> {
       totalPages: (fields[4] as int?) ?? 0,
       parentFolderPath: (fields[5] as String?) ?? '',
       addedAt: (fields[6] as DateTime?) ?? DateTime.now(),
+      // Eski Hive kayıtlarında field 7 bulunmaz; varsayılanı favori değildir.
+      isFavorite: (fields[7] as bool?) ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, ComicBook obj) {
     writer
-      ..writeByte(7) // alan sayısı
+      ..writeByte(8) // alan sayısı
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -75,7 +97,9 @@ class ComicBookAdapter extends TypeAdapter<ComicBook> {
       ..writeByte(5)
       ..write(obj.parentFolderPath)
       ..writeByte(6)
-      ..write(obj.addedAt);
+      ..write(obj.addedAt)
+      ..writeByte(7)
+      ..write(obj.isFavorite);
   }
 
   @override
