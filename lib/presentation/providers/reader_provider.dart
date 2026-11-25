@@ -29,12 +29,15 @@ class CurrentPageNotifier extends Notifier<int> {
 
     final box = Hive.box<ReadHistory>(AppConstants.historyBox);
     final history = box.get(comic.id);
-    state = history?.currentPage ?? 0;
+    final lastPage = (comic.totalPages - 1).clamp(0, 0x7fffffff);
+    state = (history?.currentPage ?? 0).clamp(0, lastPage);
   }
 
   /// Sayfa değiştiğinde çağrılır; Hive'a kaydeder.
   void goToPage(int pageIndex) {
-    if (pageIndex < 0 || pageIndex >= _comic.totalPages) return;
+    if (pageIndex < 0 || pageIndex >= _comic.totalPages || pageIndex == state) {
+      return;
+    }
     state = pageIndex;
     _saveProgress(pageIndex);
   }
@@ -57,8 +60,9 @@ class CurrentPageNotifier extends Notifier<int> {
   }
 }
 
-final currentPageProvider =
-    NotifierProvider<CurrentPageNotifier, int>(CurrentPageNotifier.new);
+final currentPageProvider = NotifierProvider<CurrentPageNotifier, int>(
+  CurrentPageNotifier.new,
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Reader Menü Görünürlüğü
@@ -75,5 +79,6 @@ class ReaderMenuNotifier extends Notifier<bool> {
   void hide() => state = false;
 }
 
-final readerMenuVisibleProvider =
-    NotifierProvider<ReaderMenuNotifier, bool>(ReaderMenuNotifier.new);
+final readerMenuVisibleProvider = NotifierProvider<ReaderMenuNotifier, bool>(
+  ReaderMenuNotifier.new,
+);

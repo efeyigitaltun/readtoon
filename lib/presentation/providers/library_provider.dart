@@ -17,9 +17,8 @@ final archiveServiceProvider = Provider<ArchiveService>(
 );
 
 final libraryScannerServiceProvider = Provider<LibraryScannerService>(
-  (ref) => LibraryScannerService(
-    archiveService: ref.read(archiveServiceProvider),
-  ),
+  (ref) =>
+      LibraryScannerService(archiveService: ref.read(archiveServiceProvider)),
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -50,12 +49,25 @@ final scanProgressProvider = NotifierProvider<ScanProgressNotifier, (int, int)>(
 class LibraryNotifier extends AsyncNotifier<List<ComicBook>> {
   @override
   Future<List<ComicBook>> build() async {
-    // Başlangıçta Hive'daki mevcut veriyi göster
     final scanner = ref.read(libraryScannerServiceProvider);
-    final folderPath = ref.read(appSettingsProvider).folderPath;
+    final settings = ref.read(appSettingsProvider);
+    final folderPath = settings.folderPath;
 
     if (folderPath == null) return [];
 
+    if (settings.scanOnStartup) {
+      final progressNotifier = ref.read(scanProgressProvider.notifier);
+      try {
+        return await scanner.scanFolder(
+          folderPath,
+          onProgress: progressNotifier.update,
+        );
+      } finally {
+        progressNotifier.reset();
+      }
+    }
+
+    // Otomatik tarama kapalıysa Hive'daki son kütüphane verisini göster.
     return scanner.getComicsForFolder(folderPath);
   }
 
@@ -104,8 +116,7 @@ class LibraryNotifier extends AsyncNotifier<List<ComicBook>> {
   }
 }
 
-final libraryProvider =
-    AsyncNotifierProvider<LibraryNotifier, List<ComicBook>>(
+final libraryProvider = AsyncNotifierProvider<LibraryNotifier, List<ComicBook>>(
   LibraryNotifier.new,
 );
 
@@ -115,8 +126,10 @@ final libraryProvider =
 
 /// Bir kitabın okuma geçmişini döner.
 /// [null] → bu kitap hiç açılmamış.
-final readHistoryProvider =
-    Provider.family<ReadHistory?, String>((ref, comicId) {
+final readHistoryProvider = Provider.family<ReadHistory?, String>((
+  ref,
+  comicId,
+) {
   final box = Hive.box<ReadHistory>(AppConstants.historyBox);
   return box.get(comicId);
 });

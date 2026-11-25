@@ -8,6 +8,7 @@ import '../providers/library_provider.dart';
 import '../providers/settings_provider.dart';
 import '../widgets/comic_cover_card.dart';
 import 'reader_screen.dart';
+import 'settings_screen.dart';
 
 /// Ana kütüphane ekranı.
 /// Seçili klasördeki .cbz dosyalarını 3 sütunlu grid ile listeler.
@@ -15,7 +16,10 @@ class LibraryScreen extends ConsumerWidget {
   const LibraryScreen({super.key});
 
   /// Tara butonuna basıldığında önce izni kontrol eder.
-  Future<void> _scanWithPermissionCheck(BuildContext context, WidgetRef ref) async {
+  Future<void> _scanWithPermissionCheck(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
     final permService = ref.read(permissionServiceProvider);
     final hasPermission = await permService.isStoragePermissionGranted();
 
@@ -113,6 +117,16 @@ class LibraryScreen extends ConsumerWidget {
               : const Icon(Icons.refresh_rounded),
         ),
 
+        IconButton(
+          tooltip: 'Ayarlar',
+          icon: const Icon(Icons.settings_rounded),
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+            );
+          },
+        ),
+
         // ─── Klasör Değiştir ─────────────────────────────────────────────
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert_rounded),
@@ -121,9 +135,13 @@ class LibraryScreen extends ConsumerWidget {
               final filePicker = ref.read(filePickerServiceProvider);
               final newPath = await filePicker.pickMangaDirectory();
               if (newPath != null) {
-                await ref.read(appSettingsProvider.notifier).setFolderPath(newPath);
+                await ref
+                    .read(appSettingsProvider.notifier)
+                    .setFolderPath(newPath);
                 if (context.mounted) {
-                  await ref.read(libraryProvider.notifier).onFolderChanged(newPath);
+                  await ref
+                      .read(libraryProvider.notifier)
+                      .onFolderChanged(newPath);
                 }
               }
             }
@@ -133,8 +151,11 @@ class LibraryScreen extends ConsumerWidget {
               value: 'change_folder',
               child: Row(
                 children: const [
-                  Icon(Icons.folder_open_rounded,
-                      size: 18, color: AppColors.textSecondary),
+                  Icon(
+                    Icons.folder_open_rounded,
+                    size: 18,
+                    color: AppColors.textSecondary,
+                  ),
                   SizedBox(width: 10),
                   Text('Klasörü değiştir'),
                 ],
@@ -203,11 +224,9 @@ class _ComicGrid extends StatelessWidget {
   }
 
   void _openReader(BuildContext context, ComicBook comic) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ReaderScreen(comic: comic),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => ReaderScreen(comic: comic)));
   }
 }
 
@@ -246,10 +265,9 @@ class _ErrorView extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               'Bir hata oluştu',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(color: AppColors.error),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(color: AppColors.error),
             ),
             const SizedBox(height: 8),
             Text(
@@ -285,13 +303,11 @@ class _EmptyLibraryView extends StatelessWidget {
               color: AppColors.textDisabled,
             ),
             const SizedBox(height: 16),
-            Text(
-              'Kütüphane Boş',
-              style: theme.textTheme.titleMedium,
-            ),
+            Text('Kütüphane Boş', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              'Seçili klasörde .cbz dosyası bulunamadı.\nFarklı bir klasör seçmeyi deneyin.',
+              'Seçili klasörde desteklenen manga dosyası bulunamadı.\n'
+              'Farklı bir klasör seçmeyi deneyin.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall,
             ),

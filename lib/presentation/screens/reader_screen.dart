@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +14,9 @@ import '../../data/decoders/i_comic_decoder.dart';
 import '../../data/models/comic_book.dart';
 import '../providers/reader_provider.dart';
 import '../providers/settings_provider.dart';
+import 'settings_screen.dart';
+
+const _doubleTapInterval = Duration(milliseconds: 300);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Reader Screen
@@ -24,9 +31,18 @@ class ReaderScreen extends ConsumerStatefulWidget {
 }
 
 class _ReaderScreenState extends ConsumerState<ReaderScreen> {
-  late IComicDecoder _decoder;
-  late PageController _pageController;
+  static const double _sideControlsWidth = 60;
+  static const double _sideControlsHeight = 120;
+
+  IComicDecoder? _decoder;
+  PageController? _pageController;
   final ScrollController _scrollController = ScrollController();
+  Offset? _sideControlsPosition;
+  final GlobalKey<_WebtoonViewState> _webtoonViewKey =
+      GlobalKey<_WebtoonViewState>();
+  Timer? _tapTimer;
+  DateTime? _lastTapAt;
+  TapUpDetails? _pendingTap;
 
   int _pageCount = 0;
   bool _isLoading = true;
@@ -53,9 +69,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   @override
   void dispose() {
+    _tapTimer?.cancel();
     WakelockPlus.disable(); // Okuyucudan çıkınca her zaman kapat
-    _decoder.dispose();
-    _pageController.dispose();
+    _decoder?.dispose();
+    _pageController?.dispose();
     _scrollController.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -70,14 +87,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   Future<void> _initDecoder() async {
     try {
-      _decoder = ComicDecoderFactory.createForFile(widget.comic.filePath);
-      final count = await _decoder.getPageCount();
+      final decoder = ComicDecoderFactory.createForFile(widget.comic.filePath);
+      _decoder = decoder;
+      final count = await decoder.getPageCount();
       if (mounted) {
         setState(() {
           _pageCount = count;
           _isLoading = false;
         });
         _initPageController();
+      } else {
+        await decoder.dispose();
       }
     } catch (e) {
       if (mounted) {
@@ -100,9 +120,97 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   // ─── Dokunma Alanı ──────────────────────────────────────────────────────────
 
   void _handleTap(TapUpDetails details) {
-    final width = MediaQuery.of(context).size.width;
-    final screenH = MediaQuery.of(context).size.height;
+    if (!ref.read(appSettingsProvider).doubleTapZoom) {
+      _performTap(details);
+      return;
+    }
+
+    final now = DateTime.now();
+    final previousTap = _lastTapAt;
+    if (previousTap != null &&
+        now.difference(previousTap) <= _doubleTapInterval) {
+      // Çift dokunuşu okuma alanına yayma; sayfa değiştirme/menü açma iptal.
+      _tapTimer?.cancel();
+      _tapTimer = null;
+      _pendingTap = null;
+      _lastTapAt = null;
+      return;
+    }
+
+    _lastTapAt = now;
+    _pendingTap = details;
+    _tapTimer?.cancel();
+    _tapTimer = Timer(_doubleTapInterval, () {
+      final pendingTap = _pendingTap;
+      _pendingTap = null;
+      _lastTapAt = null;
+      if (mounted && pendingTap != null) _performTap(pendingTap);
+    });
+  }
+
+  Offset _defaultSideControlsPosition() {
+    final screenSize = MediaQuery.sizeOf(context);
+    final safePadding = MediaQuery.paddingOf(context);
+    return _boundedSideControlsPosition(
+      Offset(
+        screenSize.width - safePadding.right - _sideControlsWidth - 12,
+        (screenSize.height - _sideControlsHeight) / 2,
+      ),
+    );
+  }
+
+  Offset _boundedSideControlsPosition(Offset position) {
+    final screenSize = MediaQuery.sizeOf(context);
+    final safePadding = MediaQuery.paddingOf(context);
+    final minX = safePadding.left + 8;
+    final maxX = math.max(
+      minX,
+      screenSize.width - safePadding.right - _sideControlsWidth - 8,
+    );
+    final minY = safePadding.top + 8;
+    final maxY = math.max(
+      minY,
+      screenSize.height - safePadding.bottom - _sideControlsHeight - 8,
+    );
+    return Offset(
+      position.dx.clamp(minX, maxX).toDouble(),
+      position.dy.clamp(minY, maxY).toDouble(),
+    );
+  }
+
+  void _moveSideControls(DragUpdateDetails details) {
+    final current = _boundedSideControlsPosition(
+      _sideControlsPosition ?? _defaultSideControlsPosition(),
+    );
+    setState(() {
+      _sideControlsPosition = _boundedSideControlsPosition(
+        current + details.delta,
+      );
+    });
+  }
+
+  void _performTap(TapUpDetails details) {
+    final screenSize = MediaQuery.sizeOf(context);
+    final width = screenSize.width;
+    final screenH = screenSize.height;
     final x = details.globalPosition.dx;
+    final y = details.globalPosition.dy;
+
+    // Overlay kontrollerine (özellikle Slider'a) dokunmayı tap zone olarak
+    // yorumlama; sürüklenebilir grup bırakıldığı yerde de korunur.
+    final menuVisible = ref.read(readerMenuVisibleProvider);
+    final controlsPosition = _boundedSideControlsPosition(
+      _sideControlsPosition ?? _defaultSideControlsPosition(),
+    );
+    final tappedSideControls = Rect.fromLTWH(
+      controlsPosition.dx,
+      controlsPosition.dy,
+      _sideControlsWidth,
+      _sideControlsHeight,
+    ).contains(details.globalPosition);
+    if (menuVisible && (y < 112 || y > screenH - 160 || tappedSideControls)) {
+      return;
+    }
 
     final isWebtoon = ref.read(appSettingsProvider).isWebtoonMode;
     final pageNotifier = ref.read(currentPageProvider.notifier);
@@ -142,9 +250,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
+  Future<void> _openSettings() async {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    if (!mounted) return;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+    );
+    if (!mounted) return;
+
+    final menuVisible = ref.read(readerMenuVisibleProvider);
+    await SystemChrome.setEnabledSystemUIMode(
+      menuVisible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+    );
+  }
+
   void _safePageNext() {
-    if (_pageController.hasClients) {
-      _pageController.nextPage(
+    if (_pageController?.hasClients ?? false) {
+      _pageController!.nextPage(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeInOut,
       );
@@ -152,8 +275,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   void _safePagePrev() {
-    if (_pageController.hasClients) {
-      _pageController.previousPage(
+    if (_pageController?.hasClients ?? false) {
+      _pageController!.previousPage(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeInOut,
       );
@@ -164,9 +287,28 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<bool>(
+      appSettingsProvider.select((settings) => settings.isWebtoonMode),
+      (previousMode, isWebtoonMode) {
+        if (previousMode == true && !isWebtoonMode) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final page = ref.read(currentPageProvider);
+            if ((_pageController?.hasClients ?? false) && _pageCount > 0) {
+              _pageController!.jumpToPage(page.clamp(0, _pageCount - 1));
+            }
+          });
+        }
+      },
+    );
+
     final isMenuVisible = ref.watch(readerMenuVisibleProvider);
     final currentPage = ref.watch(currentPageProvider);
     final settings = ref.watch(appSettingsProvider);
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final sideControlsPosition = _boundedSideControlsPosition(
+      _sideControlsPosition ?? _defaultSideControlsPosition(),
+    );
 
     if (_isLoading) {
       return const Scaffold(
@@ -205,16 +347,23 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             // ─── Okuma İçeriği ───────────────────────────────────────────
             if (settings.isWebtoonMode)
               _WebtoonView(
-                decoder: _decoder,
+                key: _webtoonViewKey,
+                decoder: _decoder!,
                 pageCount: _pageCount,
+                initialPage: currentPage,
+                doubleTapZoom: settings.doubleTapZoom,
                 scrollController: _scrollController,
+                onPageChanged: (index) {
+                  ref.read(currentPageProvider.notifier).goToPage(index);
+                },
               )
             else
               _MangaView(
-                decoder: _decoder,
+                decoder: _decoder!,
                 pageCount: _pageCount,
-                pageController: _pageController,
+                pageController: _pageController!,
                 isRTL: settings.isRTL,
+                doubleTapZoom: settings.doubleTapZoom,
                 onPageChanged: (index) {
                   ref.read(currentPageProvider.notifier).goToPage(index);
                 },
@@ -243,10 +392,33 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 onSliderChanged: (value) {
                   final index = (value * (_pageCount - 1)).round();
                   ref.read(currentPageProvider.notifier).goToPage(index);
-                  if (!settings.isWebtoonMode && _pageController.hasClients) {
-                    _pageController.jumpToPage(index);
+                  if (settings.isWebtoonMode) {
+                    _webtoonViewKey.currentState?.jumpToPage(index);
+                  } else if (_pageController?.hasClients ?? false) {
+                    _pageController!.jumpToPage(index);
                   }
                 },
+              ),
+            ),
+
+            // ─── Sağ Kenar Araçları ───────────────────────────────────────
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+              left: isMenuVisible ? sideControlsPosition.dx : screenWidth + 8,
+              top: sideControlsPosition.dy,
+              width: _sideControlsWidth,
+              height: _sideControlsHeight,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate: _moveSideControls,
+                child: _ReaderSideControls(
+                  isRTL: settings.isRTL,
+                  onToggleDirection: () => ref
+                      .read(appSettingsProvider.notifier)
+                      .setRTL(!settings.isRTL),
+                  onOpenSettings: _openSettings,
+                ),
               ),
             ),
           ],
@@ -260,31 +432,222 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 // Webtoon Modu – Dikey ListView (Lazy Loading)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-class _WebtoonView extends StatelessWidget {
+class _WebtoonView extends StatefulWidget {
   final IComicDecoder decoder;
   final int pageCount;
+  final int initialPage;
+  final bool doubleTapZoom;
   final ScrollController scrollController;
+  final ValueChanged<int> onPageChanged;
 
   const _WebtoonView({
+    super.key,
     required this.decoder,
     required this.pageCount,
+    required this.initialPage,
+    required this.doubleTapZoom,
     required this.scrollController,
+    required this.onPageChanged,
   });
 
   @override
+  State<_WebtoonView> createState() => _WebtoonViewState();
+}
+
+class _WebtoonViewState extends State<_WebtoonView> {
+  final GlobalKey _viewportKey = GlobalKey();
+  final Map<int, GlobalKey> _visiblePageKeys = {};
+  int? _lastReportedPage;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.initialPage > 0) jumpToPage(widget.initialPage);
+      _updateVisiblePage();
+    });
+  }
+
+  /// Slider/okuma geçmişi hedefini ListView'a taşır.
+  /// Sayfa yükseklikleri değişken olduğundan önce toplam scroll oranına atlar,
+  /// hedef öğe oluşturulduğunda onu görünür alanın ortasına hizalar.
+  void jumpToPage(int index) {
+    if (!mounted ||
+        !widget.scrollController.hasClients ||
+        widget.pageCount <= 0) {
+      return;
+    }
+
+    final targetIndex = index.clamp(0, widget.pageCount - 1);
+    final targetKey = _visiblePageKeys[targetIndex];
+    final targetBox = targetKey?.currentContext?.findRenderObject();
+    final viewportBox = _viewportKey.currentContext?.findRenderObject();
+
+    if (targetBox is RenderBox &&
+        targetBox.hasSize &&
+        viewportBox is RenderBox &&
+        viewportBox.hasSize) {
+      _alignPage(targetBox, viewportBox);
+      return;
+    }
+
+    final position = widget.scrollController.position;
+    final fraction = widget.pageCount <= 1
+        ? 0.0
+        : targetIndex / (widget.pageCount - 1);
+    final offset = (position.maxScrollExtent * fraction).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    widget.scrollController.jumpTo(offset);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final pageRenderBox = _visiblePageKeys[targetIndex]?.currentContext
+          ?.findRenderObject();
+      final viewportRenderBox = _viewportKey.currentContext?.findRenderObject();
+      if (pageRenderBox is RenderBox &&
+          pageRenderBox.hasSize &&
+          viewportRenderBox is RenderBox &&
+          viewportRenderBox.hasSize) {
+        _alignPage(pageRenderBox, viewportRenderBox);
+      }
+      _updateVisiblePage();
+    });
+  }
+
+  void _alignPage(RenderBox pageBox, RenderBox viewportBox) {
+    final pageCenter =
+        pageBox.localToGlobal(Offset.zero).dy + pageBox.size.height / 2;
+    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+    final viewportCenter = viewportTop + viewportBox.size.height / 2;
+    final position = widget.scrollController.position;
+    final targetOffset = (position.pixels + pageCenter - viewportCenter).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    widget.scrollController.jumpTo(targetOffset);
+  }
+
+  bool _onScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollUpdateNotification ||
+        notification is ScrollEndNotification ||
+        notification is ScrollMetricsNotification) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updateVisiblePage();
+      });
+    }
+    return false;
+  }
+
+  void _updateVisiblePage() {
+    final viewportRenderObject = _viewportKey.currentContext
+        ?.findRenderObject();
+    if (viewportRenderObject is! RenderBox || !viewportRenderObject.hasSize) {
+      return;
+    }
+
+    final viewportTop = viewportRenderObject.localToGlobal(Offset.zero).dy;
+    final viewportHeight = viewportRenderObject.size.height;
+    final viewportBottom = viewportTop + viewportHeight;
+    final viewportCenter = viewportTop + viewportHeight / 2;
+
+    int? bestIndex;
+    double bestVisibleHeight = -1;
+    bool centerIsInsideBest = false;
+
+    for (final entry in _visiblePageKeys.entries) {
+      final renderObject = entry.value.currentContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) continue;
+
+      final pageTop = renderObject.localToGlobal(Offset.zero).dy;
+      final pageBottom = pageTop + renderObject.size.height;
+      final visibleHeight = math.max(
+        0.0,
+        math.min(pageBottom, viewportBottom) - math.max(pageTop, viewportTop),
+      );
+      final centerIsInside =
+          viewportCenter >= pageTop && viewportCenter < pageBottom;
+
+      if ((centerIsInside && !centerIsInsideBest) ||
+          (centerIsInside == centerIsInsideBest &&
+              visibleHeight > bestVisibleHeight)) {
+        bestIndex = entry.key;
+        bestVisibleHeight = visibleHeight;
+        centerIsInsideBest = centerIsInside;
+      }
+    }
+
+    if (bestIndex != null && bestIndex != _lastReportedPage) {
+      _lastReportedPage = bestIndex;
+      widget.onPageChanged(bestIndex);
+    }
+  }
+
+  void _removePageKey(int index, GlobalKey key) {
+    if (identical(_visiblePageKeys[index], key)) {
+      _visiblePageKeys.remove(index);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      controller: scrollController,
-      itemCount: pageCount,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      itemBuilder: (context, index) => _LazyPageImage(
-        decoder: decoder,
-        pageIndex: index,
-        fit: BoxFit.fitWidth,
+    return SizedBox.expand(
+      key: _viewportKey,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _onScrollNotification,
+        child: ListView.builder(
+          controller: widget.scrollController,
+          itemCount: widget.pageCount,
+          // Uzak sayfaların widget/decode verileri bellekte tutulmaz.
+          addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
+          itemBuilder: (context, index) {
+            final pageKey = _visiblePageKeys.putIfAbsent(index, GlobalKey.new);
+            return _TrackedWebtoonPage(
+              pageKey: pageKey,
+              pageIndex: index,
+              onDisposed: _removePageKey,
+              child: _LazyPageImage(
+                decoder: widget.decoder,
+                pageIndex: index,
+                fit: BoxFit.fitWidth,
+                doubleTapZoom: widget.doubleTapZoom,
+              ),
+            );
+          },
+        ),
       ),
     );
   }
+}
+
+class _TrackedWebtoonPage extends StatefulWidget {
+  final GlobalKey pageKey;
+  final int pageIndex;
+  final void Function(int index, GlobalKey key) onDisposed;
+  final Widget child;
+
+  const _TrackedWebtoonPage({
+    required this.pageKey,
+    required this.pageIndex,
+    required this.onDisposed,
+    required this.child,
+  }) : super(key: pageKey);
+
+  @override
+  State<_TrackedWebtoonPage> createState() => _TrackedWebtoonPageState();
+}
+
+class _TrackedWebtoonPageState extends State<_TrackedWebtoonPage> {
+  @override
+  void dispose() {
+    widget.onDisposed(widget.pageIndex, widget.pageKey);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -296,6 +659,7 @@ class _MangaView extends StatelessWidget {
   final int pageCount;
   final PageController pageController;
   final bool isRTL;
+  final bool doubleTapZoom;
   final ValueChanged<int> onPageChanged;
 
   const _MangaView({
@@ -303,6 +667,7 @@ class _MangaView extends StatelessWidget {
     required this.pageCount,
     required this.pageController,
     required this.isRTL,
+    required this.doubleTapZoom,
     required this.onPageChanged,
   });
 
@@ -310,31 +675,34 @@ class _MangaView extends StatelessWidget {
   Widget build(BuildContext context) {
     return PageView.builder(
       controller: pageController,
-      reverse: isRTL, // Sağdan sola (manga yönü) veya soldan sağa
+      reverse: isRTL,
       onPageChanged: onPageChanged,
       itemCount: pageCount,
       itemBuilder: (context, index) => _LazyPageImage(
         decoder: decoder,
         pageIndex: index,
         fit: BoxFit.contain,
+        doubleTapZoom: doubleTapZoom,
       ),
     );
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Lazy Page Image – Decoder üzerinden sayfa başına yükleme
+// Lazy Page Image – yalnızca görünür/önbellek aralığındaki sayfayı yükler
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class _LazyPageImage extends StatefulWidget {
   final IComicDecoder decoder;
   final int pageIndex;
   final BoxFit fit;
+  final bool doubleTapZoom;
 
   const _LazyPageImage({
     required this.decoder,
     required this.pageIndex,
     required this.fit,
+    required this.doubleTapZoom,
   });
 
   @override
@@ -342,9 +710,14 @@ class _LazyPageImage extends StatefulWidget {
 }
 
 class _LazyPageImageState extends State<_LazyPageImage> {
-  Uint8List? _bytes;
+  final TransformationController _transformationController =
+      TransformationController();
+  ui.Image? _pageImage;
+  Offset? _doubleTapPosition;
   bool _loading = true;
   bool _hasError = false;
+  bool _panEnabled = false;
+  int _requestGeneration = 0;
 
   @override
   void initState() {
@@ -352,12 +725,96 @@ class _LazyPageImageState extends State<_LazyPageImage> {
     _loadPage();
   }
 
+  @override
+  void didUpdateWidget(covariant _LazyPageImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pageIndex != widget.pageIndex ||
+        oldWidget.decoder != widget.decoder) {
+      _requestGeneration++;
+      _pageImage?.dispose();
+      _pageImage = null;
+      _loading = true;
+      _hasError = false;
+      _panEnabled = false;
+      _transformationController.value = Matrix4.identity();
+      _loadPage();
+    }
+  }
+
+  @override
+  void dispose() {
+    _requestGeneration++;
+    _pageImage?.dispose();
+    _transformationController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadPage() async {
+    final generation = ++_requestGeneration;
+    ui.Codec? codec;
+    ui.Image? decodedImage;
+
     try {
       final bytes = await widget.decoder.getPage(widget.pageIndex);
-      if (mounted) setState(() { _bytes = bytes; _loading = false; });
+      if (bytes == null) throw StateError('Sayfa verisi boş');
+
+      final views = WidgetsBinding.instance.platformDispatcher.views;
+      final requestedWidth = views.isEmpty
+          ? 1080
+          : math.min(views.first.physicalSize.width.round(), 1440);
+      codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: math.max(1, requestedWidth),
+      );
+      final frame = await codec.getNextFrame();
+      decodedImage = frame.image;
+
+      if (mounted && generation == _requestGeneration) {
+        setState(() {
+          _pageImage = decodedImage;
+          _loading = false;
+          _hasError = false;
+        });
+        decodedImage = null; // Widget artık bu görüntünün sahibi.
+      }
     } catch (_) {
-      if (mounted) setState(() { _hasError = true; _loading = false; });
+      if (mounted && generation == _requestGeneration) {
+        setState(() {
+          _hasError = true;
+          _loading = false;
+        });
+      }
+    } finally {
+      codec?.dispose();
+      decodedImage?.dispose();
+    }
+  }
+
+  void _toggleDoubleTapZoom() {
+    if (!widget.doubleTapZoom) return;
+
+    final currentScale = _transformationController.value.getMaxScaleOnAxis();
+    if (currentScale > 1.01) {
+      _transformationController.value = Matrix4.identity();
+      setState(() => _panEnabled = false);
+      return;
+    }
+
+    final focalPoint = _doubleTapPosition ?? Offset.zero;
+    const scale = 2.2;
+    _transformationController.value = Matrix4.identity()
+      ..setEntry(0, 0, scale)
+      ..setEntry(1, 1, scale)
+      ..setEntry(0, 3, focalPoint.dx * (1 - scale))
+      ..setEntry(1, 3, focalPoint.dy * (1 - scale));
+    setState(() => _panEnabled = true);
+  }
+
+  void _updatePanAvailability() {
+    final shouldEnablePan =
+        _transformationController.value.getMaxScaleOnAxis() > 1.01;
+    if (shouldEnablePan != _panEnabled && mounted) {
+      setState(() => _panEnabled = shouldEnablePan);
     }
   }
 
@@ -370,38 +827,87 @@ class _LazyPageImageState extends State<_LazyPageImage> {
           child: SizedBox(
             width: 28,
             height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppColors.accent,
+            ),
           ),
         ),
       );
     }
 
-    if (_hasError || _bytes == null) {
+    final pageImage = _pageImage;
+    if (_hasError || pageImage == null) {
       return SizedBox(
         height: 200,
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.broken_image_rounded, color: AppColors.textDisabled, size: 36),
+              const Icon(
+                Icons.broken_image_rounded,
+                color: AppColors.textDisabled,
+                size: 36,
+              ),
               const SizedBox(height: 8),
-              Text('Sayfa ${widget.pageIndex + 1} yüklenemedi',
-                  style: const TextStyle(color: AppColors.textDisabled, fontSize: 12)),
+              Text(
+                'Sayfa ${widget.pageIndex + 1} yüklenemedi',
+                style: const TextStyle(
+                  color: AppColors.textDisabled,
+                  fontSize: 12,
+                ),
+              ),
             ],
           ),
         ),
       );
     }
 
-    return Image.memory(
-      _bytes!,
-      fit: widget.fit,
-      width: double.infinity,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => const SizedBox(
-        height: 200,
-        child: Center(child: Icon(Icons.broken_image_rounded, size: 36, color: AppColors.textDisabled)),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final isWebtoonPage = widget.fit == BoxFit.fitWidth;
+        final height = isWebtoonPage
+            ? width * pageImage.height / pageImage.width
+            : constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : MediaQuery.sizeOf(context).height;
+
+        // ListView'ın dikey ekseninde her satıra görüntü oranından sonlu bir
+        // yükseklik verilir. Böylece InteractiveViewer hiçbir zaman unbounded
+        // height ile ölçülmez.
+        final boundedPage = SizedBox(
+          width: width,
+          height: height,
+          child: InteractiveViewer(
+            transformationController: _transformationController,
+            constrained: true,
+            panEnabled: _panEnabled,
+            scaleEnabled: true,
+            minScale: 1,
+            maxScale: 3,
+            boundaryMargin: EdgeInsets.zero,
+            clipBehavior: Clip.hardEdge,
+            onInteractionUpdate: (_) => _updatePanAvailability(),
+            child: RawImage(
+              image: pageImage,
+              fit: widget.fit,
+              width: width,
+              height: height,
+              filterQuality: FilterQuality.medium,
+            ),
+          ),
+        );
+
+        return GestureDetector(
+          onDoubleTapDown: (details) =>
+              _doubleTapPosition = details.localPosition,
+          onDoubleTap: widget.doubleTapZoom ? _toggleDoubleTapZoom : null,
+          child: boundedPage,
+        );
+      },
     );
   }
 }
@@ -427,7 +933,10 @@ class _TopMenu extends ConsumerWidget {
           child: Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.arrow_back_rounded, color: AppColors.textPrimary),
+                icon: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: AppColors.textPrimary,
+                ),
                 onPressed: () => Navigator.of(context).pop(),
               ),
               Expanded(
@@ -442,16 +951,87 @@ class _TopMenu extends ConsumerWidget {
                 ),
               ),
               IconButton(
-                tooltip: settings.isWebtoonMode ? 'Manga moduna geç' : 'Webtoon moduna geç',
+                tooltip: settings.isWebtoonMode
+                    ? 'Manga moduna geç'
+                    : 'Webtoon moduna geç',
                 icon: Icon(
-                  settings.isWebtoonMode ? Icons.swap_vert_rounded : Icons.swap_horiz_rounded,
+                  settings.isWebtoonMode
+                      ? Icons.swap_vert_rounded
+                      : Icons.swap_horiz_rounded,
                   color: AppColors.accent,
                 ),
-                onPressed: () => ref.read(appSettingsProvider.notifier).setWebtoonMode(!settings.isWebtoonMode),
+                onPressed: () => ref
+                    .read(appSettingsProvider.notifier)
+                    .setWebtoonMode(!settings.isWebtoonMode),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sağ Kenar Araçları
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _ReaderSideControls extends StatelessWidget {
+  final bool isRTL;
+  final VoidCallback onToggleDirection;
+  final VoidCallback onOpenSettings;
+
+  const _ReaderSideControls({
+    required this.isRTL,
+    required this.onToggleDirection,
+    required this.onOpenSettings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+      decoration: BoxDecoration(
+        color: AppColors.readerMenuBackground,
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(
+          color: AppColors.textPrimary.withValues(alpha: 0.12),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: isRTL ? 'Soldan sağa oku' : 'Sağdan sola oku',
+            onPressed: onToggleDirection,
+            style: IconButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              backgroundColor: AppColors.surface,
+              fixedSize: const Size(48, 48),
+              padding: EdgeInsets.zero,
+              shape: const CircleBorder(),
+            ),
+            icon: Icon(
+              isRTL
+                  ? Icons.format_textdirection_r_to_l
+                  : Icons.format_textdirection_l_to_r,
+              size: 22,
+            ),
+          ),
+          const SizedBox(height: 8),
+          IconButton(
+            tooltip: 'Ayarlar',
+            onPressed: onOpenSettings,
+            style: IconButton.styleFrom(
+              foregroundColor: AppColors.textPrimary,
+              backgroundColor: AppColors.surface,
+              fixedSize: const Size(48, 48),
+              padding: EdgeInsets.zero,
+              shape: const CircleBorder(),
+            ),
+            icon: const Icon(Icons.settings_outlined, size: 22),
+          ),
+        ],
       ),
     );
   }
@@ -492,12 +1072,22 @@ class _BottomMenu extends StatelessWidget {
                   thumbColor: AppColors.accent,
                   overlayColor: AppColors.accent.withValues(alpha: 0.2),
                   trackHeight: 3,
-                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 8,
+                  ),
                 ),
-                child: Slider(value: progress.clamp(0.0, 1.0), onChanged: onSliderChanged),
+                child: Slider(
+                  value: progress.clamp(0.0, 1.0),
+                  onChanged: onSliderChanged,
+                ),
               ),
-              Text('${currentPage + 1} / $totalPages',
-                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              Text(
+                '${currentPage + 1} / $totalPages',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
               const SizedBox(height: 4),
             ],
           ),

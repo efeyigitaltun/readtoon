@@ -1,30 +1,46 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:readtoon/main.dart';
+import 'package:hive/hive.dart';
+import 'package:readtoon/app.dart';
+import 'package:readtoon/core/constants/app_constants.dart';
+import 'package:readtoon/data/models/comic_book.dart';
+import 'package:readtoon/data/models/read_history.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  late Directory hiveDirectory;
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  setUp(() async {
+    hiveDirectory = await Directory.systemTemp.createTemp('readtoon_test_');
+    Hive.init(hiveDirectory.path);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    if (!Hive.isAdapterRegistered(AppConstants.comicBookTypeId)) {
+      Hive.registerAdapter(ComicBookAdapter());
+    }
+    if (!Hive.isAdapterRegistered(AppConstants.readHistoryTypeId)) {
+      Hive.registerAdapter(ReadHistoryAdapter());
+    }
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    await Future.wait([
+      Hive.openBox<ComicBook>(AppConstants.comicsBox),
+      Hive.openBox<ReadHistory>(AppConstants.historyBox),
+      Hive.openBox<dynamic>(AppConstants.settingsBox),
+    ]);
+  });
+
+  tearDown(() async {
+    await Hive.close();
+    await hiveDirectory.delete(recursive: true);
+  });
+
+  testWidgets('ReadToon opens setup when no library folder is selected', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const ProviderScope(child: ReadToonApp()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ReadToon'), findsOneWidget);
+    expect(find.text('Manga Klasörünü Seç'), findsOneWidget);
   });
 }

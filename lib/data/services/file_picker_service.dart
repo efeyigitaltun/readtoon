@@ -48,19 +48,4 @@ class FilePickerService {
     return Directory(folderPath).existsSync();
   }
 
-  // ─── Okuma Modu Tercihi ─────────────────────────────────────────────────────
-
-  /// Varsayılan okuma modunu kaydeder ('webtoon' | 'manga').
-  Future<void> saveReadingMode(String mode) async {
-    final box = Hive.box<dynamic>(AppConstants.settingsBox);
-    await box.put(AppConstants.settingsKeyReadingMode, mode);
-  }
-
-  /// Kayıtlı varsayılan okuma modunu döner.
-  /// Varsayılan: 'webtoon'.
-  String getSavedReadingMode() {
-    final box = Hive.box<dynamic>(AppConstants.settingsBox);
-    return (box.get(AppConstants.settingsKeyReadingMode) as String?) ??
-        AppConstants.readingModeWebtoon;
-  }
 }
