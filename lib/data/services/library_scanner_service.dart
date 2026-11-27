@@ -7,6 +7,7 @@ import '../../core/constants/app_constants.dart';
 import '../decoders/comic_decoder_factory.dart';
 import '../models/comic_book.dart';
 import 'archive_service.dart';
+import 'saf_file_access_service.dart';
 
 /// Kütüphane tarama orkestratörü.
 ///
@@ -15,9 +16,13 @@ import 'archive_service.dart';
 /// oluşturur, Hive'a kaydeder ve kütüphane listesini döner.
 class LibraryScannerService {
   final ArchiveService _archiveService;
+  final SafFileAccessService _safFileAccessService;
 
-  LibraryScannerService({ArchiveService? archiveService})
-      : _archiveService = archiveService ?? const ArchiveService();
+  LibraryScannerService({
+    ArchiveService? archiveService,
+    SafFileAccessService? safFileAccessService,
+  }) : _archiveService = archiveService ?? const ArchiveService(),
+       _safFileAccessService = safFileAccessService ?? SafFileAccessService();
 
   // ─── Ana Tarama İşlemi ──────────────────────────────────────────────────────
 
@@ -33,7 +38,8 @@ class LibraryScannerService {
     final box = Hive.box<ComicBook>(AppConstants.comicsBox);
 
     // 1. Diskteki desteklenen dosyaları bul
-    final filePaths = _findSupportedFiles(folderPath);
+    final files = await _findSupportedFiles(folderPath);
+    final filePaths = files.map((file) => file.path).toList(growable: false);
 
     // 2. Diskten silinmiş dosyaları Hive'dan kaldır
     await _removeDeletedEntries(box, folderPath, filePaths);
@@ -44,7 +50,8 @@ class LibraryScannerService {
     for (int i = 0; i < filePaths.length; i++) {
       onProgress?.call(i + 1, filePaths.length);
 
-      final filePath = filePaths[i];
+      final file = files[i];
+      final filePath = file.path;
       final id = _makeId(filePath);
 
       // Daha önce taranmışsa Hive'dan al
@@ -55,13 +62,17 @@ class LibraryScannerService {
       }
 
       // Yeni dosya → formatına göre Isolate'ta (veya native async ile) tara
-      final scanResult = await _archiveService.scanFile(filePath);
+      final scanResult = await _archiveService.scanFile(
+        filePath,
+        displayName: file.name,
+      );
 
       if (scanResult.isValid) {
         final comic = ComicBook(
           id: id,
           title: scanResult.title,
           filePath: filePath,
+          sourceFileName: file.name,
           coverImageBytes: scanResult.coverImageBytes,
           totalPages: scanResult.totalPages,
           parentFolderPath: folderPath,
@@ -86,18 +97,14 @@ class LibraryScannerService {
   List<ComicBook> getAllComics() {
     final box = Hive.box<ComicBook>(AppConstants.comicsBox);
     return box.values.toList()
-      ..sort(
-          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
   /// Belirli bir klasöre ait kitapları başlığa göre sıralı döner.
   List<ComicBook> getComicsForFolder(String folderPath) {
     final box = Hive.box<ComicBook>(AppConstants.comicsBox);
-    return box.values
-        .where((c) => c.parentFolderPath == folderPath)
-        .toList()
-      ..sort(
-          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    return box.values.where((c) => c.parentFolderPath == folderPath).toList()
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
   // ─── Özel Yardımcılar ───────────────────────────────────────────────────────
@@ -107,19 +114,39 @@ class LibraryScannerService {
   ///
   /// Recursive tarama: alt klasörlere de bakar (Manga/Cilt1/*.cbz vb.)
   /// Erişilemez dizinler/dosyalar sessizce atlanır.
-  List<String> _findSupportedFiles(String folderPath) {
-    final dir = Directory(folderPath);
-    if (!dir.existsSync()) return [];
+  Future<List<_ComicFileReference>> _findSupportedFiles(
+    String folderPath,
+  ) async {
+    if (SafFileAccessService.isSafUri(folderPath)) {
+      final results = <_ComicFileReference>[];
+      try {
+        await for (final entry in _safFileAccessService.walk(folderPath)) {
+          final file = entry.file;
+          if (!file.isDir && ComicDecoderFactory.isSupported(file.name)) {
+            results.add(_ComicFileReference(path: file.uri, name: file.name));
+          }
+        }
+      } catch (_) {
+        // Do not interpret a revoked SAF grant as an empty folder and delete cache.
+        rethrow;
+      }
+      results.sort((a, b) => a.path.compareTo(b.path));
+      return results;
+    }
 
-    final results = <String>[];
+    final dir = Directory(folderPath);
+    if (!dir.existsSync()) {
+      throw FileSystemException('Klasöre erişilemiyor.', folderPath);
+    }
+
+    final results = <_ComicFileReference>[];
     _scanDirectory(dir, results);
-    results.sort();
+    results.sort((a, b) => a.path.compareTo(b.path));
     return results;
   }
 
-  /// [directory] içindirüksel olarak tarar.
-  /// Her düzey try-catch ile korunur — bozuk/erişimsiz altın dizin tüm taramayı kesmez.
-  void _scanDirectory(Directory directory, List<String> results) {
+  /// [directory] içindeki yerel dosyaları recursive olarak tarar.
+  void _scanDirectory(Directory directory, List<_ComicFileReference> results) {
     Iterable<FileSystemEntity> entities;
     try {
       // followLinks:false – sembolik bağlantı döngülerini önler
@@ -132,7 +159,12 @@ class LibraryScannerService {
       try {
         if (entity is File) {
           if (ComicDecoderFactory.isSupported(entity.path)) {
-            results.add(p.normalize(entity.path));
+            results.add(
+              _ComicFileReference(
+                path: p.normalize(entity.path),
+                name: p.basename(entity.path),
+              ),
+            );
           }
         } else if (entity is Directory) {
           _scanDirectory(entity, results); // Alt klasöre in
@@ -165,5 +197,14 @@ class LibraryScannerService {
   }
 
   /// Dosya yolundan Hive key olarak kullanılacak tutarlı ID üretir.
-  String _makeId(String filePath) => p.normalize(filePath);
+  String _makeId(String filePath) => SafFileAccessService.isSafUri(filePath)
+      ? filePath
+      : p.normalize(filePath);
+}
+
+class _ComicFileReference {
+  const _ComicFileReference({required this.path, required this.name});
+
+  final String path;
+  final String name;
 }

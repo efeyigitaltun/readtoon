@@ -13,8 +13,11 @@ class ComicBook extends HiveObject {
   /// Görüntülenecek başlık (dosya adı, uzantısız)
   String title;
 
-  /// .cbz dosyasının tam yolu
+  /// Yerel yol veya kalıcı SAF content URI'si.
   String filePath;
+
+  /// SAF URI'sinden yerel önbelleğe kopyalarken kullanılacak gerçek dosya adı.
+  String sourceFileName;
 
   /// Önbelleğe alınmış kapak görseli (ilk sayfa)
   Uint8List? coverImageBytes;
@@ -31,16 +34,21 @@ class ComicBook extends HiveObject {
   /// Kullanıcının favori olarak işaretleyip işaretlemediği
   bool isFavorite;
 
+  /// AniList'te eşleştirilen seri ID'si (null ise eşleştirme yok).
+  int? linkedMediaId;
+
   ComicBook({
     required this.id,
     required this.title,
     required this.filePath,
+    String? sourceFileName,
     this.coverImageBytes,
     required this.totalPages,
     required this.parentFolderPath,
     required this.addedAt,
     this.isFavorite = false,
-  });
+    this.linkedMediaId,
+  }) : sourceFileName = sourceFileName ?? filePath;
 
   /// Okuma durumunu okuma geçmişi ve toplam sayfa sayısına göre hesaplar.
   ComicReadingStatus readingStatus(ReadHistory? history) {
@@ -75,15 +83,17 @@ class ComicBookAdapter extends TypeAdapter<ComicBook> {
       totalPages: (fields[4] as int?) ?? 0,
       parentFolderPath: (fields[5] as String?) ?? '',
       addedAt: (fields[6] as DateTime?) ?? DateTime.now(),
-      // Eski Hive kayıtlarında field 7 bulunmaz; varsayılanı favori değildir.
+      // Eski Hive kayıtlarında yeni alanlar bulunmayabilir.
       isFavorite: (fields[7] as bool?) ?? false,
+      linkedMediaId: fields[8] as int?,
+      sourceFileName: (fields[9] as String?) ?? (fields[2] as String? ?? ''),
     );
   }
 
   @override
   void write(BinaryWriter writer, ComicBook obj) {
     writer
-      ..writeByte(8) // alan sayısı
+      ..writeByte(10) // alan sayısı
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -99,7 +109,11 @@ class ComicBookAdapter extends TypeAdapter<ComicBook> {
       ..writeByte(6)
       ..write(obj.addedAt)
       ..writeByte(7)
-      ..write(obj.isFavorite);
+      ..write(obj.isFavorite)
+      ..writeByte(8)
+      ..write(obj.linkedMediaId)
+      ..writeByte(9)
+      ..write(obj.sourceFileName);
   }
 
   @override

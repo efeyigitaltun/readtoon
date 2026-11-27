@@ -6,9 +6,16 @@ class AppConstants {
   static const String comicsBox = 'comics';
   static const String historyBox = 'history';
   static const String settingsBox = 'settings';
+  static const String trackedSeriesBox = 'tracked_series';
 
   // ─── Hive Settings Anahtarıları ────────────────────────────────────────────
+  /// Eski tek-klasör ayarı; çoklu klasör geçişinde migration için korunur.
   static const String settingsKeyFolderPath = 'selected_folder_path';
+  static const String settingsKeyFolderPaths = 'library_folder_paths';
+  static const String settingsKeyActiveFolderPath =
+      'active_library_folder_path';
+  static const String settingsKeyTrackedSeriesOwnerUid =
+      'tracked_series_owner_uid';
   // Okuma Ayarları
   static const String settingsKeyWebtoonMode = 'is_webtoon_mode';
   static const String settingsKeyRTL = 'is_rtl';
@@ -24,6 +31,7 @@ class AppConstants {
   // ─── Hive TypeAdapter ID'leri ──────────────────────────────────────────────
   static const int comicBookTypeId = 0;
   static const int readHistoryTypeId = 1;
+  static const int trackedSeriesTypeId = 2;
 
   // ─── UI Sabitleri ──────────────────────────────────────────────────────────
   /// Kapak görseli köşe yarıçapı (piksel)

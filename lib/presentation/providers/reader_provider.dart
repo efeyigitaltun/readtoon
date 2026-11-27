@@ -1,9 +1,13 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive/hive.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../data/models/comic_book.dart';
 import '../../data/models/read_history.dart';
+import 'tracked_series_provider.dart';
 
 // Not: Sayfa isimleri artık doğrudan ReaderScreen'deki
 // IComicDecoder.getPageCount() üzerinden alınır.
@@ -57,6 +61,24 @@ class CurrentPageNotifier extends Notifier<int> {
       lastReadAt: DateTime.now(),
     );
     box.put(_comic.id, history);
+
+    final linkedMediaId = _comic.linkedMediaId;
+    if (_comic.totalPages > 0 &&
+        page >= _comic.totalPages - 1 &&
+        linkedMediaId != null) {
+      unawaited(_countLinkedChapter(linkedMediaId));
+    }
+  }
+
+  Future<void> _countLinkedChapter(int mediaId) async {
+    try {
+      await ref
+          .read(trackedSeriesProvider.notifier)
+          .countLocalComicCompletion(mediaId: mediaId, comicId: _comic.id);
+    } catch (error) {
+      // Okuma geçmişi kaydı tamamlanmıştır; takip sayacı hatası okuyucuyu kesmez.
+      debugPrint('Bağlı seri bölüm sayacı güncellenemedi: $error');
+    }
   }
 }
 

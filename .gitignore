@@ -43,3 +43,15 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Private Firebase configuration (use the checked-in example templates)
+/.firebaserc
+/android/app/google-services.json
+/lib/firebase_options.dart
+
+# Signing credentials and private keystores
+/android/key.properties
+*.jks
+*.keystore
+*.p12
+*.pfx

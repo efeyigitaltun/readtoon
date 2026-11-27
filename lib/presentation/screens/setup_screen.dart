@@ -22,65 +22,18 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
     setState(() => _isWorking = true);
 
     try {
-      // İzin kontrolü
-      final permService = ref.read(permissionServiceProvider);
-      final granted = await permService.requestStoragePermission();
+      if (!mounted) return;
 
-      if (!granted && mounted) {
-        final permanent = await permService.isPermanentlyDenied();
-        _showPermissionDialog(permanentlyDenied: permanent);
-        return;
-      }
-      if (!granted || !mounted) return;
-
-      // Klasör seç
+      // Klasör seçimi Android'de kalıcı SAF izni verir.
       final filePickerService = ref.read(filePickerServiceProvider);
       final path = await filePickerService.pickMangaDirectory();
 
       if (path != null && mounted) {
-        await ref.read(appSettingsProvider.notifier).setFolderPath(path);
         await ref.read(libraryProvider.notifier).onFolderChanged(path);
       }
     } finally {
       if (mounted) setState(() => _isWorking = false);
     }
-  }
-
-  void _showPermissionDialog({required bool permanentlyDenied}) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(16)),
-        ),
-        title: const Text('Depolama İzni Gerekli',
-            style: TextStyle(color: AppColors.textPrimary)),
-        content: Text(
-          permanentlyDenied
-              ? 'İzin kalıcı olarak reddedildi. '
-                  'Uygulama ayarlarından "Tüm Dosyalara Erişim" iznini etkinleştirin.'
-              : 'Manga dosyalarına erişmek için "Tüm Dosyalara Erişim" izni gereklidir. '
-                  'Açılan Ayarlar ekranında izni etkinleştirin.',
-          style: const TextStyle(color: AppColors.textSecondary, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('İptal'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.of(ctx).pop();
-              await ref
-                  .read(permissionServiceProvider)
-                  .openAppPermissionSettings();
-            },
-            child: const Text('Ayarları Aç'),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -95,7 +48,11 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.menu_book_rounded, size: 88, color: AppColors.accent),
+              const Icon(
+                Icons.menu_book_rounded,
+                size: 88,
+                color: AppColors.accent,
+              ),
               const SizedBox(height: 24),
               Text(
                 'ReadToon',
@@ -113,7 +70,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                 style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
               ),
               const SizedBox(height: 40),
-              _PermissionInfoCard(),
+              _SafInfoCard(),
               const SizedBox(height: 24),
               ElevatedButton.icon(
                 onPressed: _isWorking ? null : _pickFolder,
@@ -127,14 +84,19 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                         ),
                       )
                     : const Icon(Icons.folder_open_rounded),
-                label: Text(_isWorking ? 'Lütfen bekleyin…' : 'Manga Klasörünü Seç'),
+                label: Text(
+                  _isWorking ? 'Lütfen bekleyin…' : 'Manga Klasörünü Seç',
+                ),
               ),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.info_outline_rounded,
-                      size: 14, color: AppColors.textDisabled),
+                  const Icon(
+                    Icons.info_outline_rounded,
+                    size: 14,
+                    color: AppColors.textDisabled,
+                  ),
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
@@ -152,7 +114,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
   }
 }
 
-class _PermissionInfoCard extends StatelessWidget {
+class _SafInfoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -172,7 +134,7 @@ class _PermissionInfoCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Dosya İzni Gerekiyor',
+                  'Klasör erişimi güvenli biçimde verilir',
                   style: TextStyle(
                     color: AppColors.textPrimary,
                     fontWeight: FontWeight.w600,
@@ -181,8 +143,8 @@ class _PermissionInfoCard extends StatelessWidget {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Android 11+ cihazlarda "Tüm Dosyalara Erişim" iznine ihtiyaç vardır. '
-                  'Butona bastıktan sonra açılan ekranda izni etkinleştirin.',
+                  'Android’in sistem klasör seçicisi yalnızca seçtiğiniz klasöre erişim verir. '
+                  'Bu erişim uygulama yeniden başlatıldığında da korunur.',
                   style: TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 12,

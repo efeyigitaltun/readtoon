@@ -2,156 +2,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../data/services/permission_service.dart';
-import '../providers/library_provider.dart';
 import '../providers/settings_provider.dart';
 
-/// Hive/Riverpod ile kalıcı uygulama ayarları.
-class SettingsScreen extends ConsumerStatefulWidget {
+/// General and reader preferences; library locations live on LibraryScreen.
+class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
-  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  bool _changingFolder = false;
-
-  Future<void> _changeFolder() async {
-    if (_changingFolder) return;
-    setState(() => _changingFolder = true);
-
-    try {
-      final permissions = ref.read(permissionServiceProvider);
-      final granted = await permissions.requestStoragePermission();
-      if (!granted) {
-        if (mounted) _showPermissionRequiredDialog(permissions);
-        return;
-      }
-
-      final filePicker = ref.read(filePickerServiceProvider);
-      final path = await filePicker.pickMangaDirectory();
-      if (path == null || !mounted) return;
-
-      await ref.read(appSettingsProvider.notifier).setFolderPath(path);
-      await ref.read(libraryProvider.notifier).onFolderChanged(path);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Kütüphane klasörü güncellendi')),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Klasör değiştirilemedi: $error')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _changingFolder = false);
-    }
-  }
-
-  void _showPermissionRequiredDialog(PermissionService permissions) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text('Depolama izni gerekli'),
-        content: const Text(
-          'Kütüphane klasörünü değiştirmek için depolama izni gereklidir. '
-          'İzni uygulama ayarlarından etkinleştirebilirsiniz.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Vazgeç'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop();
-              permissions.openAppPermissionSettings();
-            },
-            child: const Text('Ayarları Aç'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _openPermissionSettings() async {
-    await ref.read(permissionServiceProvider).openAppPermissionSettings();
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(appSettingsProvider);
 
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Ayarlar')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          const _SectionTitle('LOCATIONS'),
+          const _SectionTitle('GENEL'),
           Card(
-            child: ListTile(
-              leading: const Icon(
-                Icons.folder_rounded,
-                color: AppColors.accent,
-              ),
-              title: const Text('Kütüphane klasörü'),
-              subtitle: Text(
-                settings.folderPath ?? 'Klasör seçilmedi',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: _changingFolder
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.chevron_right_rounded),
-              onTap: _changingFolder ? null : _changeFolder,
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          const _SectionTitle('GENERAL'),
-          Card(
+            color: AppColors.cardBackground,
             child: Column(
               children: [
-                FutureBuilder<bool>(
-                  future: ref
-                      .read(permissionServiceProvider)
-                      .isStoragePermissionGranted(),
-                  builder: (context, snapshot) {
-                    final granted = snapshot.data ?? false;
-                    return ListTile(
-                      leading: Icon(
-                        granted
-                            ? Icons.lock_open_rounded
-                            : Icons.lock_outline_rounded,
-                        color: granted
-                            ? AppColors.accent
-                            : AppColors.textSecondary,
-                      ),
-                      title: const Text('Tüm dosyalara erişim'),
-                      subtitle: Text(
-                        snapshot.connectionState == ConnectionState.waiting
-                            ? 'İzin durumu kontrol ediliyor…'
-                            : granted
-                            ? 'İzin verilmiş'
-                            : 'İzin durumu: verilmemiş',
-                      ),
-                      trailing: const Icon(Icons.open_in_new_rounded, size: 18),
-                      onTap: _openPermissionSettings,
-                    );
-                  },
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
                 _SettingsSwitch(
                   title: 'Açılışta kütüphaneyi tara',
-                  subtitle: 'Uygulama açıldığında seçili klasörü tara',
+                  subtitle: 'Uygulama açıldığında tüm lokasyonları tara',
                   value: settings.scanOnStartup,
                   onChanged: (value) => ref
                       .read(appSettingsProvider.notifier)
@@ -161,9 +35,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 24),
-
-          const _SectionTitle('READER'),
+          const _SectionTitle('OKUYUCU'),
           Card(
+            color: AppColors.cardBackground,
             child: Column(
               children: [
                 _SettingsSwitch(
@@ -203,6 +77,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          const Center(
+            child: Text(
+              'Klasörlerini Kütüphane ekranındaki Locations bölümünden yönet.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.textDisabled, fontSize: 12),
+            ),
+          ),
         ],
       ),
     );
@@ -210,8 +92,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 }
 
 class _SectionTitle extends StatelessWidget {
-  final String title;
   const _SectionTitle(this.title);
+
+  final String title;
 
   @override
   Widget build(BuildContext context) {
@@ -229,17 +112,17 @@ class _SectionTitle extends StatelessWidget {
 }
 
 class _SettingsSwitch extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
   const _SettingsSwitch({
     required this.title,
     required this.subtitle,
     required this.value,
     required this.onChanged,
   });
+
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {

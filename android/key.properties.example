@@ -1,0 +1,6 @@
+# Copy to android/key.properties and fill in your private signing values.
+# Keep android/key.properties and the referenced keystore out of version control.
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=readtoon
+storeFile=app/readtoon-release.jks

@@ -3,13 +3,13 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:hive/hive.dart';
 
+import 'saf_file_access_service.dart';
+
 import '../../core/constants/app_constants.dart';
 
 /// Kullanıcıdan manga klasörü seçimini alır ve SAF iznini kalıcı olarak saklar.
 ///
-/// Android'de [FilePicker.platform.getDirectoryPath] çağrısı
-/// ACTION_OPEN_DOCUMENT_TREE intent'i kullanır (SAF). Dönen yol
-/// [AppConstants.settingsKeyFolderPath] anahtarıyla Hive'a yazılır.
+/// Android'de kalıcı izinli SAF URI'si, diğer platformlarda dosya yolu döner.
 class FilePickerService {
   const FilePickerService();
 
@@ -18,10 +18,14 @@ class FilePickerService {
   /// Sistem dosya seçiciyi açar ve seçilen klasör yolunu döner.
   /// Kullanıcı iptal ederse [null] döner.
   Future<String?> pickMangaDirectory() async {
-    final path = await FilePicker.platform.getDirectoryPath(
+    if (Platform.isAndroid) {
+      final directory = await SafFileAccessService().pickDirectory();
+      return directory?.uri;
+    }
+
+    return FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Manga klasörünü seçin',
     );
-    return path;
   }
 
   /// Seçilen klasör yolunu Hive'a kaydeder (kalıcı).
@@ -44,8 +48,14 @@ class FilePickerService {
   }
 
   /// Seçilen klasörün hâlâ erişilebilir olup olmadığını kontrol eder.
-  bool isFolderAccessible(String folderPath) {
+  Future<bool> isFolderAccessible(String folderPath) async {
+    if (SafFileAccessService.isSafUri(folderPath)) {
+      try {
+        return await SafFileAccessService().stat(folderPath) != null;
+      } catch (_) {
+        return false;
+      }
+    }
     return Directory(folderPath).existsSync();
   }
-
 }

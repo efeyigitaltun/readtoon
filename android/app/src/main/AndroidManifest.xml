@@ -1,28 +1,12 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- ─── Depolama İzinleri ──────────────────────────────────────────────── -->
-    <!--
-        Android 13+ (API 33): READ_MEDIA_IMAGES
-        Android 10–12        : READ_EXTERNAL_STORAGE (maxSdkVersion=32)
-        Android 11+          : MANAGE_EXTERNAL_STORAGE → Tüm dosyalara erişim
-        (permission_handler bu hiyerarşiyi otomatik yönetir)
-    -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-
-    <!-- Android 11+ için tam dosya erişimi — manga okuyucu için zorunlu -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
-        tools:ignore="ScopedStorage" />
+    <!-- AniList GraphQL ve uzak kapak görselleri için -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="readtoon"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true">
+        android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -46,19 +30,11 @@
             android:value="2" />
     </application>
 
-    <!-- permission_handler: openAppSettings() için gerekli query -->
+    <!-- Metin seçimi/işleme intent'lerini Android 11+ paket görünürlüğüne açar. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
-        </intent>
-        <!-- Sistem ayarları ekranına yönlendirme -->
-        <intent>
-            <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS"/>
-        </intent>
-        <!-- Android 11+ "Tüm Dosyalara Erişim" ayarı -->
-        <intent>
-            <action android:name="android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION"/>
         </intent>
     </queries>
 </manifest>

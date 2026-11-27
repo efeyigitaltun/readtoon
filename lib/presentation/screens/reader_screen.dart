@@ -12,6 +12,8 @@ import '../../core/theme/app_colors.dart';
 import '../../data/decoders/comic_decoder_factory.dart';
 import '../../data/decoders/i_comic_decoder.dart';
 import '../../data/models/comic_book.dart';
+import '../../data/services/saf_file_access_service.dart';
+import '../providers/library_provider.dart';
 import '../providers/reader_provider.dart';
 import '../providers/settings_provider.dart';
 import 'settings_screen.dart';
@@ -45,6 +47,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   TapUpDetails? _pendingTap;
 
   int _pageCount = 0;
+  int? _sliderPreviewPage;
   bool _isLoading = true;
   String? _loadError;
 
@@ -87,7 +90,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   Future<void> _initDecoder() async {
     try {
-      final decoder = ComicDecoderFactory.createForFile(widget.comic.filePath);
+      final localPath = await SafFileAccessService().ensureLocalFile(
+        widget.comic.filePath,
+        displayName: widget.comic.sourceFileName,
+      );
+      final decoder = ComicDecoderFactory.createForFile(localPath);
       _decoder = decoder;
       final count = await decoder.getPageCount();
       if (mounted) {
@@ -243,6 +250,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  void _commitSliderPage(double value, {required bool isWebtoon}) {
+    final index = (value * (_pageCount - 1)).round().clamp(0, _pageCount - 1);
+    if (mounted) setState(() => _sliderPreviewPage = null);
+    ref.read(currentPageProvider.notifier).goToPage(index);
+    if (isWebtoon) {
+      _webtoonViewKey.currentState?.jumpToPage(index);
+    } else if (_pageController?.hasClients ?? false) {
+      _pageController!.jumpToPage(index);
+    }
+  }
+
   void _updateSystemUI() {
     final menuVisible = ref.read(readerMenuVisibleProvider);
     SystemChrome.setEnabledSystemUIMode(
@@ -283,6 +301,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  void _openAdjacentChapter(List<ComicBook> comics, int step) {
+    final currentIndex = comics.indexWhere(
+      (comic) => comic.id == widget.comic.id,
+    );
+    final nextIndex = currentIndex + step;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= comics.length) return;
+
+    Navigator.of(context).pushReplacement<void, void>(
+      PageRouteBuilder<void>(
+        transitionDuration: const Duration(milliseconds: 220),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            ReaderScreen(comic: comics[nextIndex]),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    );
+  }
+
   // ─── Build ──────────────────────────────────────────────────────────────────
 
   @override
@@ -304,7 +340,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
     final isMenuVisible = ref.watch(readerMenuVisibleProvider);
     final currentPage = ref.watch(currentPageProvider);
+    final displayedPage = _sliderPreviewPage ?? currentPage;
     final settings = ref.watch(appSettingsProvider);
+    final libraryComics =
+        ref.watch(libraryProvider).valueOrNull ?? const <ComicBook>[];
+    final currentComicIndex = libraryComics.indexWhere(
+      (comic) => comic.id == widget.comic.id,
+    );
     final screenWidth = MediaQuery.sizeOf(context).width;
     final sideControlsPosition = _boundedSideControlsPosition(
       _sideControlsPosition ?? _defaultSideControlsPosition(),
@@ -383,21 +425,27 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             AnimatedPositioned(
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeInOut,
-              bottom: isMenuVisible ? 0 : -120,
+              bottom: isMenuVisible ? 0 : -168,
               left: 0,
               right: 0,
               child: _BottomMenu(
-                currentPage: currentPage,
+                currentPage: displayedPage,
                 totalPages: _pageCount,
+                hasPreviousChapter: currentComicIndex > 0,
+                hasNextChapter:
+                    currentComicIndex >= 0 &&
+                    currentComicIndex < libraryComics.length - 1,
+                onChapterStep: (step) =>
+                    _openAdjacentChapter(libraryComics, step),
                 onSliderChanged: (value) {
-                  final index = (value * (_pageCount - 1)).round();
-                  ref.read(currentPageProvider.notifier).goToPage(index);
-                  if (settings.isWebtoonMode) {
-                    _webtoonViewKey.currentState?.jumpToPage(index);
-                  } else if (_pageController?.hasClients ?? false) {
-                    _pageController!.jumpToPage(index);
-                  }
+                  setState(() {
+                    _sliderPreviewPage = (value * (_pageCount - 1))
+                        .round()
+                        .clamp(0, _pageCount - 1);
+                  });
                 },
+                onSliderChangeEnd: (value) =>
+                    _commitSliderPage(value, isWebtoon: settings.isWebtoonMode),
               ),
             ),
 
@@ -924,47 +972,60 @@ class _TopMenu extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(appSettingsProvider);
 
-    return Container(
-      color: AppColors.readerMenuBackground,
-      child: SafeArea(
-        bottom: false,
-        child: SizedBox(
-          height: kToolbarHeight,
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(
-                  Icons.arrow_back_rounded,
-                  color: AppColors.textPrimary,
-                ),
-                onPressed: () => Navigator.of(context).pop(),
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.background.withValues(alpha: 0.85),
+            border: Border(
+              bottom: BorderSide(
+                color: Colors.white.withValues(alpha: 0.08),
+                width: 1,
               ),
-              Expanded(
-                child: Text(
-                  comic.title,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+            ),
+          ),
+          child: SafeArea(
+            bottom: false,
+            child: SizedBox(
+              height: kToolbarHeight,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: AppColors.textPrimary,
+                    ),
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
+                  Expanded(
+                    child: Text(
+                      comic.title,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: settings.isWebtoonMode
+                        ? 'Manga moduna geç'
+                        : 'Webtoon moduna geç',
+                    icon: Icon(
+                      settings.isWebtoonMode
+                          ? Icons.swap_vert_rounded
+                          : Icons.swap_horiz_rounded,
+                      color: AppColors.accent,
+                    ),
+                    onPressed: () => ref
+                        .read(appSettingsProvider.notifier)
+                        .setWebtoonMode(!settings.isWebtoonMode),
+                  ),
+                ],
               ),
-              IconButton(
-                tooltip: settings.isWebtoonMode
-                    ? 'Manga moduna geç'
-                    : 'Webtoon moduna geç',
-                icon: Icon(
-                  settings.isWebtoonMode
-                      ? Icons.swap_vert_rounded
-                      : Icons.swap_horiz_rounded,
-                  color: AppColors.accent,
-                ),
-                onPressed: () => ref
-                    .read(appSettingsProvider.notifier)
-                    .setWebtoonMode(!settings.isWebtoonMode),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1042,57 +1103,189 @@ class _ReaderSideControls extends StatelessWidget {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class _BottomMenu extends StatelessWidget {
-  final int currentPage;
-  final int totalPages;
-  final ValueChanged<double> onSliderChanged;
-
   const _BottomMenu({
     required this.currentPage,
     required this.totalPages,
+    required this.hasPreviousChapter,
+    required this.hasNextChapter,
+    required this.onChapterStep,
     required this.onSliderChanged,
+    required this.onSliderChangeEnd,
   });
+
+  final int currentPage;
+  final int totalPages;
+  final bool hasPreviousChapter;
+  final bool hasNextChapter;
+  final ValueChanged<int> onChapterStep;
+  final ValueChanged<double> onSliderChanged;
+  final ValueChanged<double> onSliderChangeEnd;
 
   @override
   Widget build(BuildContext context) {
     final progress = totalPages > 1 ? currentPage / (totalPages - 1) : 0.0;
+    final pageLabel = '${currentPage + 1} / $totalPages';
 
-    return Container(
-      color: AppColors.readerMenuBackground,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: AppColors.accent,
-                  inactiveTrackColor: AppColors.divider,
-                  thumbColor: AppColors.accent,
-                  overlayColor: AppColors.accent.withValues(alpha: 0.2),
-                  trackHeight: 3,
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 8,
-                  ),
-                ),
-                child: Slider(
-                  value: progress.clamp(0.0, 1.0),
-                  onChanged: onSliderChanged,
-                ),
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.background.withValues(alpha: 0.85),
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withValues(alpha: 0.08),
+                width: 1,
               ),
-              Text(
-                '${currentPage + 1} / $totalPages',
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
-                ),
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x44000000),
+                blurRadius: 24,
+                offset: Offset(0, -8),
               ),
-              const SizedBox(height: 4),
             ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      _ReaderJumpButton(
+                        icon: Icons.skip_previous_rounded,
+                        tooltip: 'Önceki bölüm',
+                        enabled: hasPreviousChapter,
+                        onPressed: () => onChapterStep(-1),
+                      ),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            activeTrackColor: AppColors.accent,
+                            inactiveTrackColor: Colors.white.withValues(
+                              alpha: 0.16,
+                            ),
+                            thumbColor: AppColors.accent,
+                            overlayColor: AppColors.accent.withValues(
+                              alpha: 0.18,
+                            ),
+                            trackHeight: 5,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 9,
+                              elevation: 3,
+                              pressedElevation: 6,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 20,
+                            ),
+                            showValueIndicator:
+                                ShowValueIndicator.onlyForContinuous,
+                            valueIndicatorColor: AppColors.surface,
+                            valueIndicatorShape:
+                                const PaddleSliderValueIndicatorShape(),
+                            valueIndicatorTextStyle: const TextStyle(
+                              color: AppColors.accent,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                          child: Slider(
+                            value: progress.clamp(0.0, 1.0),
+                            label: pageLabel,
+                            onChanged: totalPages > 1 ? onSliderChanged : null,
+                            onChangeEnd: totalPages > 1
+                                ? onSliderChangeEnd
+                                : null,
+                          ),
+                        ),
+                      ),
+                      _ReaderJumpButton(
+                        icon: Icons.skip_next_rounded,
+                        tooltip: 'Sonraki bölüm',
+                        enabled: hasNextChapter,
+                        onPressed: () => onChapterStep(1),
+                      ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 2),
+                    child: Row(
+                      children: [
+                        const Text(
+                          'OKUMA İLERLEMESİ',
+                          style: TextStyle(
+                            color: AppColors.textDisabled,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.9,
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.accent.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: AppColors.accent.withValues(alpha: 0.16),
+                            ),
+                          ),
+                          child: Text(
+                            pageLabel,
+                            style: const TextStyle(
+                              color: AppColors.accent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: [ui.FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ReaderJumpButton extends StatelessWidget {
+  const _ReaderJumpButton({
+    required this.icon,
+    required this.tooltip,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: enabled ? onPressed : null,
+      style: IconButton.styleFrom(
+        foregroundColor: AppColors.accent,
+        disabledForegroundColor: AppColors.textDisabled,
+        backgroundColor: Colors.white.withValues(alpha: 0.05),
+        fixedSize: const Size(44, 44),
+        padding: EdgeInsets.zero,
+        shape: const CircleBorder(),
+      ),
+      icon: Icon(icon, size: 23),
     );
   }
 }

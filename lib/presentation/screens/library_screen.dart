@@ -4,9 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/comic_book.dart';
+import '../../data/models/folder_library_stats.dart';
+import '../../data/models/tracked_series.dart';
+import '../providers/auth_provider.dart';
 import '../providers/library_provider.dart';
 import '../providers/settings_provider.dart';
+import '../providers/tracked_series_provider.dart';
 import '../widgets/comic_cover_card.dart';
+import '../widgets/locations_management_section.dart';
+import '../widgets/link_comic_sheet.dart';
+import 'auth_screen.dart';
 import 'reader_screen.dart';
 import 'settings_screen.dart';
 
@@ -15,50 +22,135 @@ import 'settings_screen.dart';
 class LibraryScreen extends ConsumerWidget {
   const LibraryScreen({super.key});
 
-  /// Tara butonuna basıldığında önce izni kontrol eder.
+  /// Seçili klasörü veya tüm lokasyonları SAF erişim izniyle yeniden tarar.
   Future<void> _scanWithPermissionCheck(
     BuildContext context,
     WidgetRef ref,
   ) async {
-    final permService = ref.read(permissionServiceProvider);
-    final hasPermission = await permService.isStoragePermissionGranted();
-
-    if (!hasPermission) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Depolama izni verilmemiş. Klasör seçim ekranından izin verin.',
-          ),
-          backgroundColor: AppColors.surface,
-          action: SnackBarAction(
-            label: 'Ayarlar',
-            textColor: AppColors.accent,
-            onPressed: () async {
-              // İzin verilmemişse Setup ekranına dön
-              await ref.read(appSettingsProvider.notifier).clearFolderPath();
-            },
-          ),
-        ),
-      );
-      return;
+    try {
+      await ref.read(libraryProvider.notifier).scanLibrary();
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Kütüphane taranamadı: $error')));
+      }
     }
+  }
 
-    ref.read(libraryProvider.notifier).scanLibrary();
+  Future<bool> _requireSignIn(BuildContext context, WidgetRef ref) async {
+    var user = ref.read(authStateProvider).valueOrNull;
+    if (user == null && ref.read(authStateProvider).isLoading) {
+      try {
+        user = await ref.read(authStateProvider.future);
+      } catch (_) {
+        user = null;
+      }
+    }
+    if (user != null) return true;
+    if (!context.mounted) return false;
+
+    final didSignIn = await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute<bool>(builder: (_) => const AuthScreen()));
+    return context.mounted &&
+        (ref.read(authStateProvider).valueOrNull != null ||
+            (didSignIn == true && !ref.read(guestModeProvider)));
+  }
+
+  Future<void> _toggleFavorite(
+    BuildContext context,
+    WidgetRef ref,
+    ComicBook comic,
+  ) async {
+    if (!await _requireSignIn(context, ref)) return;
+    try {
+      final mediaId = comic.linkedMediaId;
+      final trackedNotifier = ref.read(trackedSeriesProvider.notifier);
+      final tracked = mediaId == null
+          ? null
+          : trackedNotifier.findByMediaId(mediaId);
+      final nextFavorite = !(tracked?.isFavorite ?? comic.isFavorite);
+      await ref
+          .read(libraryProvider.notifier)
+          .setFavorite(comic.id, nextFavorite);
+      if (mediaId != null) {
+        final series =
+            tracked ??
+            TrackedSeries(mediaId: mediaId, title: comic.title, coverUrl: '');
+        series.isFavorite = nextFavorite;
+        await trackedNotifier.save(series);
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Favori değişikliği kaydedilemedi.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showLinkComicSheet(
+    BuildContext context,
+    WidgetRef ref,
+    ComicBook comic,
+  ) async {
+    final series = ref.read(trackedSeriesProvider);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => LinkComicSheet(
+        comic: comic,
+        series: series,
+        onSelected: (mediaId) async {
+          try {
+            await ref
+                .read(libraryProvider.notifier)
+                .linkComic(comic.id, mediaId);
+            if (!sheetContext.mounted) return;
+            Navigator.of(sheetContext).pop();
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    mediaId == null
+                        ? 'Seri eşleşmesi kaldırıldı.'
+                        : 'Yerel dosya takip serisiyle eşleştirildi.',
+                  ),
+                ),
+              );
+            }
+          } catch (_) {
+            if (sheetContext.mounted) {
+              ScaffoldMessenger.of(sheetContext).showSnackBar(
+                const SnackBar(content: Text('Eşleştirme kaydedilemedi.')),
+              );
+            }
+          }
+        },
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final libraryAsync = ref.watch(libraryProvider);
+    final libraryAsync = ref.watch(visibleLibraryProvider);
     final scanProgress = ref.watch(scanProgressProvider);
-    final folderPath = ref.watch(appSettingsProvider).folderPath;
+    final selectedFolderPath = ref.watch(
+      appSettingsProvider.select((settings) => settings.selectedFolderPath),
+    );
     final activeFilter = ref.watch(libraryFilterProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: _buildAppBar(context, ref, folderPath, scanProgress),
+      appBar: _buildAppBar(context, ref, selectedFolderPath, scanProgress),
       body: Column(
         children: [
+          const LocationsManagementSection(),
           _LibraryFilterBar(
             selected: activeFilter,
             onSelected: (filter) =>
@@ -86,7 +178,12 @@ class LibraryScreen extends ConsumerWidget {
                         .select(LibraryFilter.all),
                   );
                 }
-                return _ComicGrid(comics: visibleComics);
+                return _ComicGrid(
+                  comics: visibleComics,
+                  onLink: (comic) => _showLinkComicSheet(context, ref, comic),
+                  onToggleFavorite: (comic) =>
+                      _toggleFavorite(context, ref, comic),
+                );
               },
             ),
           ),
@@ -104,7 +201,15 @@ class LibraryScreen extends ConsumerWidget {
       case LibraryFilter.all:
         return comics;
       case LibraryFilter.favorites:
-        return comics.where((comic) => comic.isFavorite).toList();
+        final tracked = ref.watch(trackedSeriesProvider);
+        return comics.where((comic) {
+          final mediaId = comic.linkedMediaId;
+          if (mediaId == null) return comic.isFavorite;
+          for (final series in tracked) {
+            if (series.mediaId == mediaId) return series.isFavorite;
+          }
+          return comic.isFavorite;
+        }).toList();
       case LibraryFilter.unread:
         return comics.where((comic) {
           final history = ref.watch(readHistoryProvider(comic.id)).valueOrNull;
@@ -121,13 +226,39 @@ class LibraryScreen extends ConsumerWidget {
   PreferredSizeWidget _buildAppBar(
     BuildContext context,
     WidgetRef ref,
-    String? folderPath,
+    String? selectedFolderPath,
     (int, int) scanProgress,
   ) {
     final isScanning = scanProgress.$2 > 0;
 
     return AppBar(
-      title: const Text('Kütüphane'),
+      title: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: selectedFolderPath == null
+            ? null
+            : () => ref
+                  .read(appSettingsProvider.notifier)
+                  .setSelectedFolderPath(null),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              selectedFolderPath == null
+                  ? 'Kütüphane'
+                  : FolderLibraryStats.nameFromPath(selectedFolderPath),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+            if (selectedFolderPath != null)
+              const Text(
+                'Tüm klasörlere dön',
+                style: TextStyle(color: AppColors.accent, fontSize: 11),
+              ),
+          ],
+        ),
+      ),
       actions: [
         // ─── Tarama İlerleme Göstergesi ─────────────────────────────────
         if (isScanning)
@@ -171,56 +302,6 @@ class LibraryScreen extends ConsumerWidget {
               MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
             );
           },
-        ),
-
-        // ─── Klasör Değiştir ─────────────────────────────────────────────
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert_rounded),
-          onSelected: (value) async {
-            if (value == 'change_folder') {
-              final filePicker = ref.read(filePickerServiceProvider);
-              final newPath = await filePicker.pickMangaDirectory();
-              if (newPath != null) {
-                await ref
-                    .read(appSettingsProvider.notifier)
-                    .setFolderPath(newPath);
-                if (context.mounted) {
-                  await ref
-                      .read(libraryProvider.notifier)
-                      .onFolderChanged(newPath);
-                }
-              }
-            }
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem(
-              value: 'change_folder',
-              child: Row(
-                children: const [
-                  Icon(
-                    Icons.folder_open_rounded,
-                    size: 18,
-                    color: AppColors.textSecondary,
-                  ),
-                  SizedBox(width: 10),
-                  Text('Klasörü değiştir'),
-                ],
-              ),
-            ),
-            if (folderPath != null)
-              PopupMenuItem(
-                enabled: false,
-                height: 36,
-                child: Text(
-                  folderPath,
-                  style: const TextStyle(
-                    color: AppColors.textDisabled,
-                    fontSize: 11,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
         ),
       ],
       bottom: isScanning
@@ -360,7 +441,14 @@ class _EmptyFilterView extends StatelessWidget {
 
 class _ComicGrid extends StatelessWidget {
   final List<ComicBook> comics;
-  const _ComicGrid({required this.comics});
+  final ValueChanged<ComicBook> onLink;
+  final ValueChanged<ComicBook> onToggleFavorite;
+
+  const _ComicGrid({
+    required this.comics,
+    required this.onLink,
+    required this.onToggleFavorite,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -378,6 +466,8 @@ class _ComicGrid extends StatelessWidget {
         return ComicCoverCard(
           comic: comic,
           onTap: () => _openReader(context, comic),
+          onLongPress: () => onLink(comic),
+          onToggleFavorite: () => onToggleFavorite(comic),
         );
       },
     );

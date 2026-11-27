@@ -1,9 +1,16 @@
 /// Tüm uygulama ayarlarını tutan saf Dart modeli.
-/// Hive Box&lt;dynamic&gt;'den key-value çiftleriyle okunur/yazılır.
+/// Hive dinamik ayar kutusundan key-value çiftleriyle okunur/yazılır.
 /// [AppSettingsNotifier] tarafından yönetilir.
 class AppSettings {
-  /// Seçili manga/webtoon klasörü. null → henüz seçilmemiş.
+  /// Eski tek-klasör ayarıyla uyumluluk için ilk kayıtlı klasör.
+  /// Aktif filtreyi belirtmez; bunun için [selectedFolderPath] kullanılır.
   final String? folderPath;
+
+  /// Kütüphaneye eklenmiş bütün klasörler.
+  final List<String> folderPaths;
+
+  /// null ise tüm lokasyonlar, doluysa yalnızca bu lokasyon gösterilir.
+  final String? selectedFolderPath;
 
   // ─── Okuyucu Ayarları ──────────────────────────────────────────────────────
 
@@ -26,6 +33,8 @@ class AppSettings {
 
   const AppSettings({
     this.folderPath,
+    this.folderPaths = const [],
+    this.selectedFolderPath,
     this.isWebtoonMode = true,
     this.isRTL = true,
     this.doubleTapZoom = true,
@@ -33,19 +42,36 @@ class AppSettings {
     this.scanOnStartup = false,
   });
 
-  /// Null yapılabilir [folderPath] için özel bir sentinal olmadan copyWith.
-  /// [clearFolder] true verilirse folderPath null yapılır.
+  bool get hasFolders => folderPaths.isNotEmpty || folderPath != null;
+
   AppSettings copyWith({
     String? folderPath,
     bool clearFolder = false,
+    List<String>? folderPaths,
+    String? selectedFolderPath,
+    bool clearSelectedFolder = false,
     bool? isWebtoonMode,
     bool? isRTL,
     bool? doubleTapZoom,
     bool? keepScreenOn,
     bool? scanOnStartup,
   }) {
+    final updatedFolderPaths = folderPaths ?? this.folderPaths;
+    final updatedFolderPath = clearFolder
+        ? null
+        : folderPath ??
+              (folderPaths != null
+                  ? (updatedFolderPaths.isEmpty
+                        ? null
+                        : updatedFolderPaths.first)
+                  : this.folderPath);
+
     return AppSettings(
-      folderPath: clearFolder ? null : (folderPath ?? this.folderPath),
+      folderPath: updatedFolderPath,
+      folderPaths: updatedFolderPaths,
+      selectedFolderPath: clearSelectedFolder
+          ? null
+          : selectedFolderPath ?? this.selectedFolderPath,
       isWebtoonMode: isWebtoonMode ?? this.isWebtoonMode,
       isRTL: isRTL ?? this.isRTL,
       doubleTapZoom: doubleTapZoom ?? this.doubleTapZoom,

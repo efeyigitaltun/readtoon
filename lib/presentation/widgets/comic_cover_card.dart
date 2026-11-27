@@ -5,24 +5,45 @@ import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/comic_book.dart';
 import '../providers/library_provider.dart';
+import '../providers/tracked_series_provider.dart';
 
 /// Kütüphane ızgarasındaki tek bir manga kartı.
 /// Kapak görseli, başlık ve ilerleme çubuğunu içerir.
 class ComicCoverCard extends ConsumerWidget {
   final ComicBook comic;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final VoidCallback onToggleFavorite;
 
-  const ComicCoverCard({super.key, required this.comic, required this.onTap});
+  const ComicCoverCard({
+    super.key,
+    required this.comic,
+    required this.onTap,
+    required this.onToggleFavorite,
+    this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final progress = ref.watch(comicProgressProvider(comic));
     final history = ref.watch(readHistoryProvider(comic.id)).valueOrNull;
     final readingStatus = comic.readingStatus(history);
+    final trackedSeries = ref.watch(trackedSeriesProvider);
+    var isFavorite = comic.isFavorite;
+    final mediaId = comic.linkedMediaId;
+    if (mediaId != null) {
+      for (final series in trackedSeries) {
+        if (series.mediaId == mediaId) {
+          isFavorite = series.isFavorite;
+          break;
+        }
+      }
+    }
     final theme = Theme.of(context);
 
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppConstants.coverBorderRadius),
         child: Container(
@@ -36,6 +57,24 @@ class ComicCoverCard extends ConsumerWidget {
                   fit: StackFit.expand,
                   children: [
                     _CoverImage(comic: comic),
+                    if (comic.linkedMediaId != null)
+                      Positioned(
+                        bottom: 7,
+                        left: 7,
+                        child: Container(
+                          width: 27,
+                          height: 27,
+                          decoration: BoxDecoration(
+                            color: AppColors.background.withValues(alpha: 0.82),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.link_rounded,
+                            size: 16,
+                            color: AppColors.accent,
+                          ),
+                        ),
+                      ),
                     if (readingStatus == ComicReadingStatus.read)
                       Positioned(
                         top: 7,
@@ -78,18 +117,16 @@ class ComicCoverCard extends ConsumerWidget {
                         shape: const CircleBorder(),
                         child: InkWell(
                           customBorder: const CircleBorder(),
-                          onTap: () => ref
-                              .read(libraryProvider.notifier)
-                              .toggleFavorite(comic.id),
+                          onTap: onToggleFavorite,
                           child: SizedBox(
                             width: 34,
                             height: 34,
                             child: Icon(
-                              comic.isFavorite
+                              isFavorite
                                   ? Icons.favorite_rounded
                                   : Icons.favorite_border_rounded,
                               size: 19,
-                              color: comic.isFavorite
+                              color: isFavorite
                                   ? AppColors.accent
                                   : AppColors.textPrimary.withValues(
                                       alpha: 0.72,

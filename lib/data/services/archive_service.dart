@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../decoders/comic_decoder_factory.dart';
 import '../decoders/i_comic_decoder.dart';
+import 'saf_file_access_service.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Tarama Sonucu
@@ -47,12 +48,20 @@ class ArchiveService {
 
   /// [filePath] dosyasını tarar: kapak görseli ve sayfa sayısını döner.
   /// Kütüphane listesi oluşturulurken kullanılır (tek seferlik).
-  Future<ComicScanResult> scanFile(String filePath) async {
-    final title = p.basenameWithoutExtension(filePath);
+  Future<ComicScanResult> scanFile(
+    String filePath, {
+    String? displayName,
+  }) async {
+    final sourceName = displayName ?? p.basename(filePath);
+    final title = p.basenameWithoutExtension(sourceName);
     IComicDecoder? decoder;
 
     try {
-      decoder = ComicDecoderFactory.createForFile(filePath);
+      final localPath = await SafFileAccessService().ensureLocalFile(
+        filePath,
+        displayName: sourceName,
+      );
+      decoder = ComicDecoderFactory.createForFile(localPath);
       final pageCount = await decoder.getPageCount();
       final coverBytes = await decoder.getCoverImage();
 

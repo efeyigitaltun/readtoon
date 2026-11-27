@@ -1,0 +1,138 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedInAs(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{userId} {
+      allow get: if signedInAs(userId);
+      allow list: if false;
+      allow create: if signedInAs(userId)
+        && request.resource.data.keys().hasAll([
+          'uid', 'username', 'usernameLower', 'email', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'username', 'usernameLower', 'email', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.username is string
+        && request.resource.data.username.size() >= 3
+        && request.resource.data.username.size() <= 24
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if signedInAs(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.username is string
+        && request.resource.data.username.size() >= 3
+        && request.resource.data.username.size() <= 24
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if signedInAs(userId);
+    }
+
+    match /users/{userId}/review_index/{mediaId} {
+      allow read, delete: if signedInAs(userId);
+      allow create, update: if signedInAs(userId)
+        && request.resource.data.keys().hasAll(['mediaId', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['mediaId', 'updatedAt'])
+        && request.resource.data.mediaId is int
+        && request.resource.data.mediaId > 0
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /users/{userId}/library/{mediaId} {
+      allow read: if signedInAs(userId);
+      allow create, update: if signedInAs(userId)
+        && request.resource.data.keys().hasAll([
+          'mediaId', 'title', 'coverUrl', 'bannerUrl', 'status', 'rating',
+          'chaptersRead', 'totalChapters', 'reviewNote', 'isFavorite',
+          'completedLocalComicIds', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'mediaId', 'title', 'coverUrl', 'bannerUrl', 'status', 'rating',
+          'chaptersRead', 'totalChapters', 'reviewNote', 'isFavorite',
+          'completedLocalComicIds', 'updatedAt'
+        ])
+        && request.resource.data.mediaId is int
+        && request.resource.data.mediaId > 0
+        && request.resource.data.title is string
+        && request.resource.data.coverUrl is string
+        && (request.resource.data.bannerUrl == null
+          || request.resource.data.bannerUrl is string)
+        && request.resource.data.status in [
+          'reading', 'completed', 'planToRead', 'dropped'
+        ]
+        && request.resource.data.rating is number
+        && request.resource.data.rating >= 0
+        && request.resource.data.rating <= 5
+        && request.resource.data.chaptersRead is int
+        && request.resource.data.chaptersRead >= 0
+        && (request.resource.data.totalChapters == null
+          || (request.resource.data.totalChapters is int
+            && request.resource.data.totalChapters >= 0))
+        && (request.resource.data.reviewNote == null
+          || (request.resource.data.reviewNote is string
+            && request.resource.data.reviewNote.size() <= 500))
+        && request.resource.data.isFavorite is bool
+        && request.resource.data.completedLocalComicIds is list
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if signedInAs(userId);
+    }
+
+    match /review_reports/{reportId} {
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasAll([
+          'reporterId', 'mediaId', 'reviewUserId', 'reviewId', 'reason', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'reporterId', 'mediaId', 'reviewUserId', 'reviewId', 'reason', 'createdAt'
+        ])
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.mediaId is int
+        && request.resource.data.mediaId > 0
+        && request.resource.data.reviewUserId is string
+        && request.resource.data.reviewId is string
+        && request.resource.data.reviewUserId != request.auth.uid
+        && request.resource.data.reviewId == request.resource.data.reviewUserId
+        && exists(
+          /databases/$(database)/documents/series_reviews/$(request.resource.data.mediaId)/reviews/$(request.resource.data.reviewId)
+        )
+        && get(
+          /databases/$(database)/documents/series_reviews/$(request.resource.data.mediaId)/reviews/$(request.resource.data.reviewId)
+        ).data.userId == request.resource.data.reviewUserId
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 200
+        && request.resource.data.createdAt == request.time;
+      allow get, list: if request.auth != null
+        && resource.data.reporterId == request.auth.uid;
+      allow delete: if request.auth != null
+        && resource.data.reporterId == request.auth.uid;
+      allow update: if false;
+    }
+
+    match /series_reviews/{mediaId}/reviews/{userId} {
+      allow read: if true;
+      allow create, update: if signedInAs(userId)
+        && request.resource.data.keys().hasAll([
+          'userId', 'username', 'rating', 'reviewNote', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'userId', 'username', 'rating', 'reviewNote', 'updatedAt'
+        ])
+        && request.resource.data.userId == userId
+        && request.resource.data.username is string
+        && request.resource.data.username.size() >= 1
+        && request.resource.data.username.size() <= 24
+        && request.resource.data.rating is number
+        && request.resource.data.rating >= 0
+        && request.resource.data.rating <= 5
+        && request.resource.data.reviewNote is string
+        && request.resource.data.reviewNote.size() <= 500
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if signedInAs(userId);
+    }
+  }
+}
